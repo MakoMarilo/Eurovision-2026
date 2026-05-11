@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eurovision Prediction Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bowlby+One&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Fraunces:ital,wght@1,700;1,900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  :root {
+    --bg-deep: #0a0420;
+    --bg-mid: #1a0a3e;
+    --pink: #ff2d92;
+    --magenta: #e300ff;
+    --cyan: #00e5ff;
+    --lime: #c2ff3d;
+    --gold: #ffd60a;
+    --ink: #fff5fb;
+    --ink-dim: #b8a8c8;
+    --card: rgba(255, 255, 255, 0.04);
+    --card-border: rgba(255, 255, 255, 0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, system-ui, sans-serif;
+    background: var(--bg-deep);
+    color: var(--ink);
+    min-height: 100vh;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 0%, rgba(227, 0, 255, 0.25), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 80% 10%, rgba(0, 229, 255, 0.20), transparent 60%),
+      radial-gradient(ellipse 90% 70% at 50% 100%, rgba(255, 45, 146, 0.18), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      radial-gradient(circle at 12% 18%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 78% 32%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 45% 76%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 88% 84%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 26% 56%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 62% 12%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 8% 90%, white 0.5px, transparent 1px),
+      radial-gradient(circle at 95% 60%, white 0.5px, transparent 1px);
+    background-size: 600px 600px;
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 0;
+    animation: starfield 60s linear infinite;
+  }
+  @keyframes starfield {
+    from { transform: translateY(0); }
+    to { transform: translateY(-600px); }
+  }
+  #root { position: relative; z-index: 1; }
+
+  .app { max-width: 920px; margin: 0 auto; padding: 24px 18px 80px; }
+
+  /* HEADER */
+  .header { text-align: center; padding: 32px 0 24px; position: relative; }
+  .header-eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 14px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    border-radius: 999px;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    margin-bottom: 16px;
+  }
+  .header-eyebrow .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--lime);
+    box-shadow: 0 0 8px var(--lime);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .header h1 {
+    font-family: 'Bowlby One', cursive;
+    font-size: clamp(40px, 8vw, 76px);
+    line-height: 0.95;
+    letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--pink) 0%, var(--magenta) 35%, var(--cyan) 70%, var(--lime) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    filter: drop-shadow(0 0 32px rgba(227, 0, 255, 0.35));
+  }
+  .header h1 .accent {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-weight: 900;
+    text-transform: none;
+    background: linear-gradient(135deg, var(--gold), #fff5a8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .header p { color: var(--ink-dim); font-size: 15px; max-width: 480px; margin: 0 auto; }
+
+  /* PHASE NAV */
+  .phase-nav {
+    display: flex; gap: 6px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 6px;
+    margin: 24px 0;
+    overflow-x: auto;
+  }
+  .phase-btn {
+    flex: 1;
+    min-width: 90px;
+    background: transparent;
+    border: none;
+    color: var(--ink-dim);
+    padding: 12px 14px;
+    border-radius: 11px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .phase-btn:hover:not(.active) { color: var(--ink); background: rgba(255, 255, 255, 0.04); }
+  .phase-btn.active {
+    background: linear-gradient(135deg, var(--pink), var(--magenta));
+    color: white;
+    box-shadow: 0 4px 16px rgba(255, 45, 146, 0.4);
+  }
+  .phase-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+  .phase-btn .num {
+    font-family: 'Bowlby One', cursive;
+    font-size: 14px;
+    opacity: 0.8;
+  }
+
+  /* CARDS */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 24px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(20px);
+  }
+  .card-title {
+    font-family: 'Bowlby One', cursive;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+    color: var(--ink);
+  }
+  .card-subtitle {
+    font-size: 14px;
+    color: var(--ink-dim);
+    margin-bottom: 20px;
+  }
+
+  /* COUNTRY GRID */
+  .country-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+  .country-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    user-select: none;
+  }
+  .country-chip .flag { font-size: 20px; line-height: 1; }
+  .country-chip:hover {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.20);
+    transform: translateY(-1px);
+  }
+  .country-chip.selected {
+    background: linear-gradient(135deg, rgba(255, 45, 146, 0.20), rgba(227, 0, 255, 0.20));
+    border-color: var(--pink);
+    box-shadow: 0 0 0 1px var(--pink), 0 4px 16px rgba(255, 45, 146, 0.25);
+  }
+  .country-chip.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  /* BUTTONS */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 14px 22px;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: none;
+    transition: all 0.18s ease;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--pink), var(--magenta));
+    color: white;
+    box-shadow: 0 6px 20px rgba(227, 0, 255, 0.35);
+  }
+  .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 28px rgba(227, 0, 255, 0.50); }
+  .btn-primary:disabled {
+    opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none;
+  }
+  .btn-ghost {
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink);
+    border: 1px solid var(--card-border);
+  }
+  .btn-ghost:hover { background: rgba(255, 255, 255, 0.10); }
+  .btn-danger {
+    background: rgba(255, 60, 80, 0.10);
+    color: #ff7a90;
+    border: 1px solid rgba(255, 60, 80, 0.25);
+  }
+  .btn-danger:hover { background: rgba(255, 60, 80, 0.20); }
+  .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .btn-icon { padding: 10px; min-width: 0; }
+
+  /* RANKING LIST */
+  .ranking-list { display: flex; flex-direction: column; gap: 8px; }
+  .ranking-slot {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px 10px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    min-height: 56px;
+    transition: all 0.2s ease;
+  }
+  .ranking-slot.empty { border-style: dashed; opacity: 0.55; }
+  .ranking-slot.filled.gold { background: linear-gradient(90deg, rgba(255, 214, 10, 0.15), rgba(255, 255, 255, 0.04)); border-color: rgba(255, 214, 10, 0.35); }
+  .ranking-slot.filled.silver { background: linear-gradient(90deg, rgba(220, 220, 240, 0.10), rgba(255, 255, 255, 0.04)); border-color: rgba(220, 220, 240, 0.25); }
+  .ranking-slot.filled.bronze { background: linear-gradient(90deg, rgba(205, 127, 50, 0.15), rgba(255, 255, 255, 0.04)); border-color: rgba(205, 127, 50, 0.30); }
+  .rank-num {
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 10px;
+    font-family: 'Bowlby One', cursive;
+    font-size: 18px;
+    background: rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+  }
+  .ranking-slot.gold .rank-num { background: linear-gradient(135deg, var(--gold), #ff9a3d); color: #2a1700; }
+  .ranking-slot.silver .rank-num { background: linear-gradient(135deg, #e8e8ff, #b0b0d8); color: #15152a; }
+  .ranking-slot.bronze .rank-num { background: linear-gradient(135deg, #d8954a, #8a4a20); color: #fff2e0; }
+  .rank-country { flex: 1; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
+  .rank-country .flag { font-size: 22px; }
+  .rank-country .placeholder { color: var(--ink-dim); font-weight: 400; font-style: italic; }
+  .rank-controls { display: flex; gap: 4px; }
+  .rank-controls button {
+    width: 32px; height: 32px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .rank-controls button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); }
+  .rank-controls button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* INPUT */
+  .input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--card-border);
+    color: var(--ink);
+    padding: 14px 16px;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 15px;
+    transition: all 0.15s ease;
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--magenta);
+    background: rgba(255, 255, 255, 0.10);
+    box-shadow: 0 0 0 3px rgba(227, 0, 255, 0.20);
+  }
+  .input-row { display: flex; gap: 8px; }
+  .input-row .input { flex: 1; }
+
+  /* PLAYER LIST */
+  .player-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+  .player-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    font-size: 14px;
+  }
+  .player-row .name { flex: 1; font-weight: 600; }
+  .player-row .check {
+    width: 24px; height: 24px;
+    background: var(--lime);
+    color: #001a00;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900;
+  }
+  .player-row .actions { display: flex; gap: 4px; }
+  .player-row button {
+    background: transparent; border: none; color: var(--ink-dim);
+    padding: 4px 8px; border-radius: 6px; cursor: pointer;
+    font-family: inherit; font-size: 12px;
+  }
+  .player-row button:hover { background: rgba(255, 255, 255, 0.08); color: var(--ink); }
+
+  /* SECTION HEADER */
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .section-header h3 {
+    font-family: 'Bowlby One', cursive;
+    font-size: 16px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+  .badge {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--card-border);
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--ink-dim);
+  }
+  .badge.live { background: var(--lime); color: #001a00; border-color: var(--lime); }
+
+  /* LEADERBOARD */
+  .lb-podium {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr 1fr;
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 24px;
+  }
+  .lb-podium-item {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 18px 12px;
+    text-align: center;
+    position: relative;
+  }
+  .lb-podium-item.first {
+    background: linear-gradient(180deg, rgba(255, 214, 10, 0.20), rgba(255, 255, 255, 0.04));
+    border-color: rgba(255, 214, 10, 0.4);
+    padding-top: 30px;
+  }
+  .lb-podium-item.first::before {
+    content: '👑';
+    position: absolute;
+    top: -16px; left: 50%; transform: translateX(-50%);
+    font-size: 32px;
+  }
+  .lb-podium-item.second {
+    background: linear-gradient(180deg, rgba(220, 220, 240, 0.12), rgba(255, 255, 255, 0.04));
+  }
+  .lb-podium-item.third {
+    background: linear-gradient(180deg, rgba(205, 127, 50, 0.15), rgba(255, 255, 255, 0.04));
+  }
+  .lb-pos {
+    font-family: 'Bowlby One', cursive;
+    font-size: 28px;
+    color: var(--ink-dim);
+    margin-bottom: 4px;
+  }
+  .lb-podium-item.first .lb-pos { color: var(--gold); font-size: 36px; }
+  .lb-name { font-weight: 700; font-size: 16px; word-break: break-word; }
+  .lb-score {
+    font-family: 'Bowlby One', cursive;
+    font-size: 22px;
+    background: linear-gradient(135deg, var(--cyan), var(--lime));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    margin-top: 4px;
+  }
+  .lb-row {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 16px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .lb-row:hover { background: rgba(255, 255, 255, 0.07); }
+  .lb-row .pos {
+    font-family: 'Bowlby One', cursive;
+    font-size: 18px;
+    width: 32px; text-align: center;
+    color: var(--ink-dim);
+  }
+  .lb-row .name { flex: 1; font-weight: 600; }
+  .lb-row .score {
+    font-family: 'Bowlby One', cursive;
+    font-size: 18px;
+    color: var(--cyan);
+  }
+  .lb-row .expand { color: var(--ink-dim); transition: transform 0.2s; }
+  .lb-row.expanded .expand { transform: rotate(180deg); }
+  .lb-detail {
+    padding: 0 16px 16px;
+    margin-top: -8px;
+    margin-bottom: 8px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-top: none;
+    border-radius: 0 0 14px 14px;
+  }
+  .lb-detail-row {
+    display: grid;
+    grid-template-columns: 30px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 0;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .lb-detail-row:last-child { border: none; }
+  .lb-detail-row .pred-pos { font-weight: 700; color: var(--ink-dim); }
+  .lb-detail-row .points {
+    font-family: 'Bowlby One', cursive;
+    font-size: 13px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .lb-detail-row .points.hit-10 { background: var(--lime); color: #001a00; }
+  .lb-detail-row .points.hit-mid { background: rgba(0, 229, 255, 0.20); color: var(--cyan); }
+  .lb-detail-row .points.miss { color: var(--ink-dim); opacity: 0.5; }
+
+  /* ACTUAL RESULTS DISPLAY */
+  .actual-results-card {
+    background: linear-gradient(135deg, rgba(255, 214, 10, 0.10), rgba(227, 0, 255, 0.10));
+    border: 1px solid rgba(255, 214, 10, 0.30);
+  }
+
+  /* HELP / EMPTY STATES */
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--ink-dim);
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state h4 {
+    font-family: 'Bowlby One', cursive;
+    font-size: 18px;
+    color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .help-text {
+    padding: 14px;
+    background: rgba(0, 229, 255, 0.06);
+    border: 1px solid rgba(0, 229, 255, 0.20);
+    border-radius: 12px;
+    font-size: 13px;
+    color: var(--ink-dim);
+    margin-bottom: 16px;
+    line-height: 1.55;
+  }
+  .help-text b { color: var(--cyan); }
+
+  /* SHARE CODE */
+  .share-card {
+    background: linear-gradient(135deg, rgba(194, 255, 61, 0.10), rgba(0, 229, 255, 0.10));
+    border: 1px solid rgba(194, 255, 61, 0.30);
+  }
+  .share-code-box {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .share-code-text {
+    flex: 1;
+    background: rgba(0, 0, 0, 0.30);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-family: 'Menlo', 'Monaco', monospace;
+    font-size: 12px;
+    color: var(--lime);
+    word-break: break-all;
+    user-select: all;
+    line-height: 1.4;
+    max-height: 88px;
+    overflow-y: auto;
+  }
+  .copy-btn {
+    background: linear-gradient(135deg, var(--lime), var(--cyan));
+    color: #001a00;
+    border: none;
+    padding: 0 18px;
+    border-radius: 10px;
+    font-family: inherit;
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    align-self: stretch;
+  }
+  .copy-btn:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .copy-btn.copied { background: var(--lime); }
+  .share-textarea {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.30);
+    border: 1px solid var(--card-border);
+    color: var(--ink);
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-family: 'Menlo', 'Monaco', monospace;
+    font-size: 12px;
+    min-height: 80px;
+    resize: vertical;
+  }
+  .share-textarea:focus {
+    outline: none;
+    border-color: var(--cyan);
+    box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.20);
+  }
+  details.share-section {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 0;
+    margin-bottom: 12px;
+  }
+  details.share-section summary {
+    cursor: pointer;
+    padding: 14px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-dim);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  details.share-section summary::after {
+    content: '+';
+    font-size: 18px;
+    transition: transform 0.2s;
+  }
+  details.share-section[open] summary::after { transform: rotate(45deg); }
+  details.share-section summary:hover { color: var(--ink); }
+  details.share-section .inner {
+    padding: 0 16px 16px;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-mid);
+    border: 1px solid var(--lime);
+    color: var(--lime);
+    padding: 12px 20px;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    z-index: 100;
+    animation: toast-in 0.3s ease, toast-out 0.3s ease 2.7s forwards;
+  }
+  @keyframes toast-in { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+  @keyframes toast-out { to { transform: translate(-50%, 20px); opacity: 0; } }
+
+  /* Mobile */
+  @media (max-width: 600px) {
+    .app { padding: 16px 12px 60px; }
+    .card { padding: 18px; border-radius: 16px; }
+    .country-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+    .country-chip { padding: 10px 12px; font-size: 13px; }
+    .phase-btn { font-size: 11px; padding: 10px 8px; min-width: 70px; }
+    .lb-podium { grid-template-columns: 1fr; }
+    .lb-podium-item.first { order: -1; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback } = React;
+
+const ALL_COUNTRIES = [
+  { name: 'Albania', flag: '🇦🇱' },
+  { name: 'Armenia', flag: '🇦🇲' },
+  { name: 'Australia', flag: '🇦🇺' },
+  { name: 'Austria', flag: '🇦🇹' },
+  { name: 'Azerbaijan', flag: '🇦🇿' },
+  { name: 'Belgium', flag: '🇧🇪' },
+  { name: 'Croatia', flag: '🇭🇷' },
+  { name: 'Cyprus', flag: '🇨🇾' },
+  { name: 'Czechia', flag: '🇨🇿' },
+  { name: 'Denmark', flag: '🇩🇰' },
+  { name: 'Estonia', flag: '🇪🇪' },
+  { name: 'Finland', flag: '🇫🇮' },
+  { name: 'France', flag: '🇫🇷' },
+  { name: 'Georgia', flag: '🇬🇪' },
+  { name: 'Germany', flag: '🇩🇪' },
+  { name: 'Greece', flag: '🇬🇷' },
+  { name: 'Iceland', flag: '🇮🇸' },
+  { name: 'Ireland', flag: '🇮🇪' },
+  { name: 'Israel', flag: '🇮🇱' },
+  { name: 'Italy', flag: '🇮🇹' },
+  { name: 'Latvia', flag: '🇱🇻' },
+  { name: 'Lithuania', flag: '🇱🇹' },
+  { name: 'Luxembourg', flag: '🇱🇺' },
+  { name: 'Malta', flag: '🇲🇹' },
+  { name: 'Moldova', flag: '🇲🇩' },
+  { name: 'Montenegro', flag: '🇲🇪' },
+  { name: 'Netherlands', flag: '🇳🇱' },
+  { name: 'Norway', flag: '🇳🇴' },
+  { name: 'Poland', flag: '🇵🇱' },
+  { name: 'Portugal', flag: '🇵🇹' },
+  { name: 'San Marino', flag: '🇸🇲' },
+  { name: 'Serbia', flag: '🇷🇸' },
+  { name: 'Slovenia', flag: '🇸🇮' },
+  { name: 'Spain', flag: '🇪🇸' },
+  { name: 'Sweden', flag: '🇸🇪' },
+  { name: 'Switzerland', flag: '🇨🇭' },
+  { name: 'Ukraine', flag: '🇺🇦' },
+  { name: 'United Kingdom', flag: '🇬🇧' },
+];
+
+const COUNTRY_BY_NAME = Object.fromEntries(ALL_COUNTRIES.map(c => [c.name, c]));
+const flagFor = (name) => (COUNTRY_BY_NAME[name]?.flag) || '🏳️';
+
+const STORAGE_KEY = 'eurovision:quiz:v1';
+
+// Unified storage: prefer Claude artifact storage if available, fall back to localStorage
+// so this file works both in the chat preview and as a standalone download.
+const storage = {
+  async get(key) {
+    try {
+      if (typeof window.storage !== 'undefined' && window.storage?.get) {
+        const r = await window.storage.get(key);
+        if (r?.value) return r.value;
+      }
+    } catch (e) { /* fall through */ }
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  },
+  async set(key, value) {
+    try {
+      if (typeof window.storage !== 'undefined' && window.storage?.set) {
+        await window.storage.set(key, value);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    try { localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+  },
+};
+
+const DEFAULT_STATE = {
+  finalists: [],
+  finalistsLocked: false,
+  actualResults: [],
+  resultsRevealed: false,
+  predictions: {}, // { name: [country, country, ...] }
+};
+
+// ---- Share-code encoding ----
+// Setup code:    base64( JSON({ t:'s', f:[...finalists] }) )       prefix shown as ES1-
+// Prediction:    base64( JSON({ t:'p', n:'Mako', r:[...10] }) )   prefix shown as EP1-
+// Prefixes are just visual hints — we still detect type from the JSON 't' field after decoding.
+
+function b64encode(str) {
+  // Encode unicode-safe (flag emojis, accents, etc.)
+  return btoa(unescape(encodeURIComponent(str))).replace(/=+$/, '');
+}
+function b64decode(str) {
+  // Re-pad and decode
+  const padded = str + '='.repeat((4 - str.length % 4) % 4);
+  return decodeURIComponent(escape(atob(padded)));
+}
+function makeSetupCode(finalists) {
+  return 'ES1-' + b64encode(JSON.stringify({ t: 's', f: finalists }));
+}
+function makePredictionCode(name, ranking) {
+  return 'EP1-' + b64encode(JSON.stringify({ t: 'p', n: name, r: ranking }));
+}
+function parseCode(input) {
+  if (!input) return { ok: false, error: 'Empty code' };
+  // Strip whitespace, accept either with or without prefix
+  let s = input.trim().replace(/\s+/g, '');
+  s = s.replace(/^ES1-/, '').replace(/^EP1-/, '');
+  // Also accept full URLs containing a hash
+  const hashMatch = s.match(/#(?:setup|pred)=(.+)$/);
+  if (hashMatch) s = hashMatch[1];
+  try {
+    const decoded = b64decode(s);
+    const obj = JSON.parse(decoded);
+    if (obj.t === 's' && Array.isArray(obj.f)) return { ok: true, type: 'setup', finalists: obj.f };
+    if (obj.t === 'p' && typeof obj.n === 'string' && Array.isArray(obj.r)) return { ok: true, type: 'prediction', name: obj.n, ranking: obj.r };
+    return { ok: false, error: 'Unrecognised code' };
+  } catch (e) {
+    return { ok: false, error: 'Code looks corrupted or incomplete' };
+  }
+}
+
+// Score: for each country in player's top 10, find where it actually placed.
+// If actual is in top 10 too, points = 10 - |predPos - actualPos| (min 0)
+// If actual is outside top 10 (or country not in finals at all), 0 points
+// Max 100 (perfect prediction)
+function calcScore(prediction, actual) {
+  if (!actual || actual.length === 0) return 0;
+  let score = 0;
+  const details = [];
+  prediction.forEach((country, predIdx) => {
+    const predPos = predIdx + 1;
+    const actualIdx = actual.indexOf(country);
+    if (actualIdx >= 0) {
+      const actualPos = actualIdx + 1;
+      const diff = Math.abs(predPos - actualPos);
+      const pts = Math.max(0, 10 - diff);
+      score += pts;
+      details.push({ country, predPos, actualPos, pts });
+    } else {
+      details.push({ country, predPos, actualPos: null, pts: 0 });
+    }
+  });
+  return { score, details };
+}
+
+function Toast({ msg }) {
+  if (!msg) return null;
+  return <div className="toast">✨ {msg}</div>;
+}
+
+function Header() {
+  return (
+    <header className="header">
+      <div className="header-eyebrow">
+        <span className="dot"></span> Eurovision Prediction Quiz
+      </div>
+      <h1>Bet on the <span className="accent">Twelve&nbsp;Points</span></h1>
+      <p>Set up the finalists. Friends submit their top 10. Closest prediction wins.</p>
+    </header>
+  );
+}
+
+function PhaseNav({ phase, setPhase, state }) {
+  const canPredict = state.finalists.length >= 10;
+  const canResults = state.finalistsLocked && Object.keys(state.predictions).length > 0;
+  const canLeaderboard = state.resultsRevealed || state.actualResults.length === 10;
+  const tabs = [
+    { id: 'setup',       label: 'Finalists', num: 1, enabled: true },
+    { id: 'predict',     label: 'Predict',   num: 2, enabled: canPredict },
+    { id: 'results',     label: 'Results',   num: 3, enabled: canResults },
+    { id: 'leaderboard', label: 'Scores',    num: 4, enabled: canLeaderboard },
+  ];
+  return (
+    <nav className="phase-nav" role="tablist">
+      {tabs.map(t => (
+        <button
+          key={t.id}
+          className={`phase-btn ${phase === t.id ? 'active' : ''} ${!t.enabled ? 'disabled' : ''}`}
+          onClick={() => t.enabled && setPhase(t.id)}
+          disabled={!t.enabled}
+        >
+          <span className="num">{t.num}</span> {t.label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function CountryGrid({ countries, selectedSet, onToggle, disabledSet }) {
+  return (
+    <div className="country-grid">
+      {countries.map(c => {
+        const selected = selectedSet?.has(c.name);
+        const disabled = disabledSet?.has(c.name);
+        return (
+          <button
+            key={c.name}
+            className={`country-chip ${selected ? 'selected' : ''} ${disabled ? 'disabled' : ''}`}
+            onClick={() => !disabled && onToggle(c.name)}
+            disabled={disabled}
+          >
+            <span className="flag">{c.flag}</span>
+            <span>{c.name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ShareCode({ code, label, hint, copyLabel = 'Copy code', linkKind }) {
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Build a shareable link only when running from http(s) — file:// links won't help anyone.
+  const canMakeLink = typeof window !== 'undefined'
+    && linkKind
+    && (window.location.protocol === 'http:' || window.location.protocol === 'https:');
+  // The code has an ES1- or EP1- prefix; the URL hash uses 'setup=' / 'pred=' instead
+  const link = canMakeLink
+    ? `${window.location.origin}${window.location.pathname}#${linkKind}=${code.replace(/^E[SP]1-/, '')}`
+    : null;
+
+  const copyText = async (text, setter) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+    setter(true);
+    setTimeout(() => setter(false), 1800);
+  };
+
+  return (
+    <div>
+      {label && <div style={{ fontSize: 13, color: 'var(--ink-dim)', marginBottom: 4 }}>{label}</div>}
+      {hint && <div style={{ fontSize: 12, color: 'var(--ink-dim)', opacity: 0.8, marginBottom: 8 }}>{hint}</div>}
+      <div className="share-code-box">
+        <div className="share-code-text">{code}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignSelf: 'stretch' }}>
+          {canMakeLink && (
+            <button className={`copy-btn ${linkCopied ? 'copied' : ''}`} onClick={() => copyText(link, setLinkCopied)} style={{ flex: 1 }}>
+              {linkCopied ? '✓ Link copied' : '🔗 Copy link'}
+            </button>
+          )}
+          <button className={`copy-btn ${codeCopied ? 'copied' : ''}`} onClick={() => copyText(code, setCodeCopied)} style={{ flex: 1, background: canMakeLink ? 'rgba(255,255,255,0.08)' : undefined, color: canMakeLink ? 'var(--ink)' : undefined }}>
+            {codeCopied ? '✓ Code copied' : copyLabel}
+          </button>
+        </div>
+      </div>
+      {canMakeLink && (
+        <div style={{ fontSize: 11, color: 'var(--ink-dim)', marginTop: 6, opacity: 0.7 }}>
+          Tip: <b style={{ color: 'var(--cyan)' }}>link</b> = friend taps it and the app loads automatically. <b style={{ color: 'var(--cyan)' }}>Code</b> = pasted manually in the import field.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImportCode({ placeholder, onImport, buttonLabel = 'Import' }) {
+  const [text, setText] = useState('');
+  const [err, setErr] = useState('');
+  const handle = () => {
+    setErr('');
+    const result = parseCode(text);
+    if (!result.ok) {
+      setErr(result.error);
+      return;
+    }
+    const handled = onImport(result);
+    if (handled === false) return; // caller will show its own toast
+    setText('');
+  };
+  return (
+    <div>
+      <textarea
+        className="share-textarea"
+        placeholder={placeholder}
+        value={text}
+        onChange={e => { setText(e.target.value); setErr(''); }}
+      />
+      {err && <div style={{ color: '#ff7a90', fontSize: 12, marginTop: 6 }}>{err}</div>}
+      <div className="btn-row">
+        <button className="btn btn-primary" onClick={handle} disabled={!text.trim()}>{buttonLabel}</button>
+      </div>
+    </div>
+  );
+}
+
+function SetupScreen({ state, save, setPhase, toast }) {
+  const selected = useMemo(() => new Set(state.finalists), [state.finalists]);
+  const [customCountry, setCustomCountry] = useState('');
+
+  const toggle = (name) => {
+    if (state.finalistsLocked) return;
+    const next = selected.has(name)
+      ? state.finalists.filter(n => n !== name)
+      : [...state.finalists, name];
+    save({ ...state, finalists: next });
+  };
+
+  const addCustom = () => {
+    const trimmed = customCountry.trim();
+    if (!trimmed) return;
+    if (state.finalists.includes(trimmed)) {
+      toast('Already added');
+      return;
+    }
+    save({ ...state, finalists: [...state.finalists, trimmed] });
+    setCustomCountry('');
+  };
+
+  const lock = () => {
+    save({ ...state, finalistsLocked: true });
+    toast('Finalists locked!');
+    setPhase('predict');
+  };
+
+  const unlock = () => {
+    if (!confirm('Unlock finalists? Existing predictions will be kept but may include countries that are no longer in the final.')) return;
+    save({ ...state, finalistsLocked: false });
+  };
+
+  const reset = () => {
+    if (!confirm('Reset EVERYTHING (finalists, predictions, results)? This cannot be undone.')) return;
+    save(DEFAULT_STATE);
+    toast('Reset complete');
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="section-header">
+          <div>
+            <h3>Step 1 · Set the Finalists</h3>
+          </div>
+          <div className="badge">{state.finalists.length} selected</div>
+        </div>
+        <div className="help-text">
+          Tap each country that made the final. Eurovision finals typically have <b>26 countries</b>, but any number from 10+ works. You can add custom entries below for anyone not in the list.
+        </div>
+
+        {!state.finalistsLocked && (
+          <details className="share-section">
+            <summary>🎟️ Got a setup code from your host? Paste it here</summary>
+            <div className="inner">
+              <ImportCode
+                placeholder="Paste a setup code starting with ES1-..."
+                buttonLabel="Load Finalists"
+                onImport={(r) => {
+                  if (r.type !== 'setup') {
+                    toast("That's a prediction code, not a setup code");
+                    return false;
+                  }
+                  save({ ...state, finalists: r.finalists, finalistsLocked: true });
+                  toast(`Loaded ${r.finalists.length} finalists`);
+                  setPhase('predict');
+                }}
+              />
+            </div>
+          </details>
+        )}
+
+        <CountryGrid
+          countries={ALL_COUNTRIES}
+          selectedSet={selected}
+          onToggle={toggle}
+        />
+
+        <div style={{ marginTop: 18 }}>
+          <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Add a custom country</label>
+          <div className="input-row">
+            <input
+              className="input"
+              placeholder="e.g. Bulgaria"
+              value={customCountry}
+              onChange={e => setCustomCountry(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addCustom()}
+              disabled={state.finalistsLocked}
+            />
+            <button className="btn btn-ghost" onClick={addCustom} disabled={state.finalistsLocked}>Add</button>
+          </div>
+          {state.finalists.filter(n => !COUNTRY_BY_NAME[n]).length > 0 && (
+            <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {state.finalists.filter(n => !COUNTRY_BY_NAME[n]).map(n => (
+                <span key={n} className="badge" style={{ background: 'rgba(255,45,146,0.15)', borderColor: 'rgba(255,45,146,0.3)', color: 'var(--pink)' }}>
+                  {n}
+                  {!state.finalistsLocked && (
+                    <button onClick={() => toggle(n)} style={{ marginLeft: 6, background: 'none', border: 'none', color: 'inherit', cursor: 'pointer' }}>×</button>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="btn-row">
+          {!state.finalistsLocked ? (
+            <button
+              className="btn btn-primary"
+              onClick={lock}
+              disabled={state.finalists.length < 10}
+            >
+              Lock In & Open Predictions →
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-primary" onClick={() => setPhase('predict')}>
+                Go to Predictions →
+              </button>
+              <button className="btn btn-ghost" onClick={unlock}>Unlock to edit</button>
+            </>
+          )}
+          <button className="btn btn-danger" onClick={reset}>Reset all</button>
+        </div>
+      </div>
+
+      {state.finalistsLocked && state.finalists.length > 0 && (
+        <div className="card share-card">
+          <div className="section-header">
+            <h3>📣 Send to Friends</h3>
+            <span className="badge live">Step 1.5</span>
+          </div>
+          <div className="help-text" style={{ background: 'rgba(194, 255, 61, 0.06)', borderColor: 'rgba(194, 255, 61, 0.20)' }}>
+            If you've hosted this file (GitHub Pages, Netlify, etc.) tap <b>Copy link</b> — friends just tap the link and the app opens with finalists loaded. Otherwise <b>Copy code</b>: friends paste it on their Step 1.
+          </div>
+          <ShareCode
+            code={makeSetupCode(state.finalists)}
+            label="Setup code"
+            hint={`Contains ${state.finalists.length} finalists.`}
+            copyLabel="Copy setup code"
+            linkKind="setup"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function RankingList({ ranking, onMove, onRemove, max = 10, emptyLabel = 'Empty — tap a country below' }) {
+  const slots = [];
+  for (let i = 0; i < max; i++) {
+    const country = ranking[i];
+    const filled = !!country;
+    const cls = filled ? (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '') : '';
+    slots.push(
+      <div key={i} className={`ranking-slot ${filled ? 'filled' : 'empty'} ${cls}`}>
+        <div className="rank-num">{i + 1}</div>
+        <div className="rank-country">
+          {filled ? (
+            <>
+              <span className="flag">{flagFor(country)}</span>
+              <span>{country}</span>
+            </>
+          ) : (
+            <span className="placeholder">{emptyLabel}</span>
+          )}
+        </div>
+        {filled && (
+          <div className="rank-controls">
+            <button onClick={() => onMove(i, i - 1)} disabled={i === 0} aria-label="Move up">▲</button>
+            <button onClick={() => onMove(i, i + 1)} disabled={i === ranking.length - 1} aria-label="Move down">▼</button>
+            <button onClick={() => onRemove(i)} aria-label="Remove">×</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+  return <div className="ranking-list">{slots}</div>;
+}
+
+function PredictScreen({ state, save, setPhase, toast }) {
+  const [name, setName] = useState('');
+  const [ranking, setRanking] = useState([]);
+  const [editingName, setEditingName] = useState(null);
+  const [lastSubmitted, setLastSubmitted] = useState(null);
+
+  const finalistsSet = useMemo(() => new Set(state.finalists), [state.finalists]);
+  const inRankingSet = useMemo(() => new Set(ranking), [ranking]);
+  const availableCountries = useMemo(
+    () => state.finalists.map(n => ({ name: n, flag: flagFor(n) })),
+    [state.finalists]
+  );
+
+  const addCountry = (country) => {
+    if (ranking.length >= 10) {
+      toast('Top 10 is full — remove one first');
+      return;
+    }
+    if (inRankingSet.has(country)) return;
+    setRanking([...ranking, country]);
+  };
+
+  const removeAt = (idx) => {
+    setRanking(ranking.filter((_, i) => i !== idx));
+  };
+
+  const moveAt = (from, to) => {
+    if (to < 0 || to >= ranking.length) return;
+    const next = [...ranking];
+    [next[from], next[to]] = [next[to], next[from]];
+    setRanking(next);
+  };
+
+  const handleToggle = (country) => {
+    if (inRankingSet.has(country)) {
+      setRanking(ranking.filter(c => c !== country));
+    } else {
+      addCountry(country);
+    }
+  };
+
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) { toast('Enter your name first'); return; }
+    if (ranking.length !== 10) { toast(`Pick ${10 - ranking.length} more before submitting`); return; }
+    if (state.predictions[trimmed] && trimmed !== editingName) {
+      if (!confirm(`${trimmed} already submitted. Replace their prediction?`)) return;
+    }
+    const finalRanking = [...ranking];
+    const nextPredictions = { ...state.predictions, [trimmed]: finalRanking };
+    if (editingName && editingName !== trimmed) {
+      delete nextPredictions[editingName];
+    }
+    save({ ...state, predictions: nextPredictions });
+    toast(`Saved ${trimmed}'s prediction!`);
+    setLastSubmitted({ name: trimmed, ranking: finalRanking });
+    setName('');
+    setRanking([]);
+    setEditingName(null);
+    // Scroll to share-back card
+    setTimeout(() => {
+      const el = document.getElementById('share-back-card');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
+
+  const startEdit = (playerName) => {
+    setName(playerName);
+    setRanking([...state.predictions[playerName]]);
+    setEditingName(playerName);
+    setLastSubmitted(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const removePlayer = (playerName) => {
+    if (!confirm(`Remove ${playerName}'s prediction?`)) return;
+    const next = { ...state.predictions };
+    delete next[playerName];
+    save({ ...state, predictions: next });
+    if (editingName === playerName) {
+      setEditingName(null);
+      setName('');
+      setRanking([]);
+    }
+    if (lastSubmitted?.name === playerName) setLastSubmitted(null);
+  };
+
+  const handleImportPrediction = (r) => {
+    if (r.type === 'setup') {
+      toast("That's a setup code — go to Step 1 to load it");
+      return false;
+    }
+    if (r.type !== 'prediction') return false;
+    // Validate ranking countries are in finalists
+    const finalistsSetLocal = new Set(state.finalists);
+    const missing = r.ranking.filter(c => !finalistsSetLocal.has(c));
+    if (missing.length > 0) {
+      if (!confirm(`This prediction includes countries not in your finalists list (${missing.join(', ')}). Import anyway?`)) return false;
+    }
+    if (r.ranking.length !== 10) {
+      if (!confirm(`This prediction has ${r.ranking.length} countries (expected 10). Import anyway?`)) return false;
+    }
+    if (state.predictions[r.name]) {
+      if (!confirm(`${r.name} already exists. Replace their prediction?`)) return false;
+    }
+    save({ ...state, predictions: { ...state.predictions, [r.name]: r.ranking } });
+    toast(`Imported ${r.name}'s prediction`);
+  };
+
+  const players = Object.keys(state.predictions);
+
+  return (
+    <>
+      <div className="card">
+        <div className="section-header">
+          <div>
+            <h3>Step 2 · Submit a Prediction</h3>
+          </div>
+          {editingName && <span className="badge" style={{ background: 'rgba(0, 229, 255, 0.15)', borderColor: 'var(--cyan)', color: 'var(--cyan)' }}>Editing {editingName}</span>}
+        </div>
+        <div className="help-text">
+          Type the player's name, then tap finalists to fill their top 10 (1 = winner, 10 = tenth place). Use the arrows to reorder. Or paste a friend's <b>prediction code</b> below to import their pick instead.
+        </div>
+
+        <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Player name</label>
+        <input
+          className="input"
+          placeholder="e.g. Mako"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={{ marginBottom: 20 }}
+        />
+
+        <div className="section-header" style={{ marginTop: 4 }}>
+          <h3>Predicted Top 10</h3>
+          <span className="badge">{ranking.length}/10</span>
+        </div>
+        <RankingList
+          ranking={ranking}
+          onMove={moveAt}
+          onRemove={removeAt}
+        />
+
+        <div className="section-header" style={{ marginTop: 22 }}>
+          <h3>Tap to add</h3>
+          <span className="badge">{state.finalists.length - ranking.length} left</span>
+        </div>
+        <CountryGrid
+          countries={availableCountries}
+          selectedSet={inRankingSet}
+          onToggle={handleToggle}
+        />
+
+        <div className="btn-row">
+          <button className="btn btn-primary" onClick={submit} disabled={ranking.length !== 10 || !name.trim()}>
+            {editingName ? 'Update Prediction' : 'Save Prediction'}
+          </button>
+          {(ranking.length > 0 || editingName) && (
+            <button className="btn btn-ghost" onClick={() => { setRanking([]); setName(''); setEditingName(null); }}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {lastSubmitted && (
+        <div className="card share-card" id="share-back-card">
+          <div className="section-header">
+            <h3>✨ Send Your Prediction</h3>
+            <span className="badge live">{lastSubmitted.name}</span>
+          </div>
+          <div className="help-text" style={{ background: 'rgba(194, 255, 61, 0.06)', borderColor: 'rgba(194, 255, 61, 0.20)' }}>
+            Saved! Send this to whoever's hosting the leaderboard. <b>Link</b> auto-imports when tapped; <b>code</b> gets pasted manually.
+          </div>
+          <ShareCode
+            code={makePredictionCode(lastSubmitted.name, lastSubmitted.ranking)}
+            label={`${lastSubmitted.name}'s prediction code`}
+            copyLabel="Copy prediction"
+            linkKind="pred"
+          />
+          <div className="btn-row">
+            <button className="btn btn-ghost" onClick={() => setLastSubmitted(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
+
+      <details className="share-section">
+        <summary>📥 Import a prediction code from a friend</summary>
+        <div className="inner">
+          <div style={{ fontSize: 13, color: 'var(--ink-dim)', marginBottom: 10, lineHeight: 1.5 }}>
+            Paste a code that starts with <code style={{ color: 'var(--cyan)' }}>EP1-</code> and it'll be added to the leaderboard.
+          </div>
+          <ImportCode
+            placeholder="Paste a prediction code..."
+            buttonLabel="Import Prediction"
+            onImport={handleImportPrediction}
+          />
+        </div>
+      </details>
+
+      {state.finalistsLocked && (
+        <details className="share-section">
+          <summary>🎟️ Show setup code (re-share with late arrivals)</summary>
+          <div className="inner">
+            <ShareCode
+              code={makeSetupCode(state.finalists)}
+              hint="Friends paste this on Step 1 (or tap the link) to load the same finalists list."
+              copyLabel="Copy setup code"
+              linkKind="setup"
+            />
+          </div>
+        </details>
+      )}
+
+      {players.length > 0 && (
+        <div className="card">
+          <div className="section-header">
+            <h3>Submitted Predictions</h3>
+            <span className="badge live">{players.length} player{players.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="player-list">
+            {players.map(p => (
+              <div key={p} className="player-row">
+                <div className="check">✓</div>
+                <div className="name">{p}</div>
+                <div className="actions">
+                  <button onClick={() => startEdit(p)}>Edit</button>
+                  <button onClick={() => removePlayer(p)}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {players.length >= 1 && (
+            <div className="btn-row">
+              <button className="btn btn-primary" onClick={() => setPhase('results')}>
+                Done? Enter Actual Results →
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ResultsScreen({ state, save, setPhase, toast }) {
+  const [ranking, setRanking] = useState(state.actualResults);
+  const inRankingSet = useMemo(() => new Set(ranking), [ranking]);
+  const availableCountries = useMemo(
+    () => state.finalists.map(n => ({ name: n, flag: flagFor(n) })),
+    [state.finalists]
+  );
+
+  const addCountry = (country) => {
+    if (ranking.length >= 10) { toast('Top 10 is full'); return; }
+    if (inRankingSet.has(country)) return;
+    setRanking([...ranking, country]);
+  };
+  const removeAt = (idx) => setRanking(ranking.filter((_, i) => i !== idx));
+  const moveAt = (from, to) => {
+    if (to < 0 || to >= ranking.length) return;
+    const next = [...ranking];
+    [next[from], next[to]] = [next[to], next[from]];
+    setRanking(next);
+  };
+  const handleToggle = (country) => {
+    if (inRankingSet.has(country)) {
+      setRanking(ranking.filter(c => c !== country));
+    } else {
+      addCountry(country);
+    }
+  };
+
+  const saveResults = () => {
+    save({ ...state, actualResults: ranking });
+    toast('Results saved');
+  };
+
+  const reveal = () => {
+    if (ranking.length !== 10) { toast('Fill all 10 spots first'); return; }
+    save({ ...state, actualResults: ranking, resultsRevealed: true });
+    setPhase('leaderboard');
+  };
+
+  return (
+    <>
+      <div className="card actual-results-card">
+        <div className="section-header">
+          <h3>Step 3 · The Actual Results</h3>
+          <span className="badge">{ranking.length}/10</span>
+        </div>
+        <div className="help-text">
+          Enter the real top 10 as they're announced (1 = winner). You can fill this in live as the show goes — your predictions are already locked in.
+        </div>
+
+        <RankingList ranking={ranking} onMove={moveAt} onRemove={removeAt} />
+
+        <div className="section-header" style={{ marginTop: 22 }}>
+          <h3>Finalists</h3>
+        </div>
+        <CountryGrid
+          countries={availableCountries}
+          selectedSet={inRankingSet}
+          onToggle={handleToggle}
+        />
+
+        <div className="btn-row">
+          <button className="btn btn-primary" onClick={reveal} disabled={ranking.length !== 10}>
+            Reveal the Leaderboard! 👑
+          </button>
+          <button className="btn btn-ghost" onClick={saveResults}>Save progress</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function LeaderboardScreen({ state, save, setPhase, toast }) {
+  const [expanded, setExpanded] = useState(null);
+
+  const scored = useMemo(() => {
+    const list = Object.entries(state.predictions).map(([name, pred]) => {
+      const { score, details } = calcScore(pred, state.actualResults);
+      return { name, prediction: pred, score, details };
+    });
+    list.sort((a, b) => b.score - a.score);
+    return list;
+  }, [state.predictions, state.actualResults]);
+
+  const playAgain = () => {
+    if (!confirm('Start a fresh round? Finalists will be kept, but predictions and results will be cleared.')) return;
+    save({ ...state, predictions: {}, actualResults: [], resultsRevealed: false });
+    setPhase('predict');
+    toast('Fresh round started');
+  };
+
+  const top3 = scored.slice(0, 3);
+  const rest = scored.slice(3);
+
+  if (scored.length === 0) {
+    return (
+      <div className="card empty-state">
+        <div className="icon">🤷‍♀️</div>
+        <h4>No predictions submitted</h4>
+        <p>Go back and add at least one player.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="card actual-results-card">
+        <div className="section-header">
+          <h3>🏆 The Final Top 10</h3>
+        </div>
+        <div className="ranking-list">
+          {state.actualResults.map((country, i) => (
+            <div key={country} className={`ranking-slot filled ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`}>
+              <div className="rank-num">{i + 1}</div>
+              <div className="rank-country">
+                <span className="flag">{flagFor(country)}</span>
+                <span>{country}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {top3.length >= 1 && (
+        <div className="lb-podium">
+          {top3.length >= 2 && (
+            <div className="lb-podium-item second">
+              <div className="lb-pos">2</div>
+              <div className="lb-name">{top3[1].name}</div>
+              <div className="lb-score">{top3[1].score} pts</div>
+            </div>
+          )}
+          {top3.length >= 1 && (
+            <div className="lb-podium-item first">
+              <div className="lb-pos">1</div>
+              <div className="lb-name">{top3[0].name}</div>
+              <div className="lb-score">{top3[0].score} pts</div>
+            </div>
+          )}
+          {top3.length >= 3 && (
+            <div className="lb-podium-item third">
+              <div className="lb-pos">3</div>
+              <div className="lb-name">{top3[2].name}</div>
+              <div className="lb-score">{top3[2].score} pts</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="section-header">
+          <h3>Full Leaderboard</h3>
+          <span className="badge">Max 100 pts</span>
+        </div>
+        <div className="help-text">
+          <b>Scoring:</b> For each country in your top 10 that's also in the actual top 10, you get <b>10 − |off-by|</b> points. Exact match = 10 pts, off by 1 = 9 pts, off by 9 = 1 pt, missed = 0 pts. <b>Perfect = 100.</b> Tap a row to see the breakdown.
+        </div>
+        {scored.map((entry, idx) => (
+          <React.Fragment key={entry.name}>
+            <div
+              className={`lb-row ${expanded === entry.name ? 'expanded' : ''}`}
+              onClick={() => setExpanded(expanded === entry.name ? null : entry.name)}
+            >
+              <div className="pos">#{idx + 1}</div>
+              <div className="name">{entry.name}</div>
+              <div className="score">{entry.score}</div>
+              <div className="expand">▼</div>
+            </div>
+            {expanded === entry.name && (
+              <div className="lb-detail">
+                {entry.details.map((d, i) => (
+                  <div key={i} className="lb-detail-row">
+                    <div className="pred-pos">#{d.predPos}</div>
+                    <div>
+                      <span style={{ marginRight: 6 }}>{flagFor(d.country)}</span>
+                      {d.country}
+                      {d.actualPos != null && d.actualPos !== d.predPos && (
+                        <span style={{ color: 'var(--ink-dim)', marginLeft: 8, fontSize: 12 }}>
+                          → actual #{d.actualPos}
+                        </span>
+                      )}
+                      {d.actualPos == null && (
+                        <span style={{ color: 'var(--ink-dim)', marginLeft: 8, fontSize: 12 }}>
+                          → not in top 10
+                        </span>
+                      )}
+                    </div>
+                    <div className={`points ${d.pts === 10 ? 'hit-10' : d.pts > 0 ? 'hit-mid' : 'miss'}`}>
+                      {d.pts > 0 ? `+${d.pts}` : '0'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </React.Fragment>
+        ))}
+
+        <div className="btn-row">
+          <button className="btn btn-ghost" onClick={playAgain}>Play another round</button>
+          <button className="btn btn-ghost" onClick={() => setPhase('results')}>Edit results</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function App() {
+  const [phase, setPhase] = useState('setup');
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [loaded, setLoaded] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+
+  const showToast = useCallback((msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 3000);
+  }, []);
+
+  // Load from storage
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await storage.get(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          setState(parsed);
+          if (parsed.resultsRevealed) setPhase('leaderboard');
+          else if (parsed.actualResults?.length === 10) setPhase('results');
+          else if (Object.keys(parsed.predictions || {}).length > 0) setPhase('predict');
+          else if (parsed.finalistsLocked) setPhase('predict');
+        }
+      } catch (e) { /* fresh start */ }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const save = useCallback(async (next) => {
+    setState(next);
+    try {
+      await storage.set(STORAGE_KEY, JSON.stringify(next));
+    } catch (e) { console.error('save failed', e); }
+  }, []);
+
+  // Handle shareable links: #setup=... or #pred=... in the URL
+  useEffect(() => {
+    if (!loaded) return;
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash || '';
+    const m = hash.match(/^#(setup|pred)=(.+)$/);
+    if (!m) return;
+    const [, kind, encoded] = m;
+    // Clear the hash first so reloads don't re-trigger
+    try {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    } catch (e) { /* ignore */ }
+
+    const result = parseCode(encoded);
+    if (!result.ok) {
+      showToast(`Couldn't read shared link: ${result.error}`);
+      return;
+    }
+    if (kind === 'setup' && result.type === 'setup') {
+      if (state.finalistsLocked && state.finalists.length > 0) {
+        if (!window.confirm(`A setup link was opened with ${result.finalists.length} finalists. Replace your current ${state.finalists.length} finalists?`)) return;
+      }
+      save({ ...state, finalists: result.finalists, finalistsLocked: true });
+      setPhase('predict');
+      showToast(`Loaded ${result.finalists.length} finalists — make your pick!`);
+    } else if (kind === 'pred' && result.type === 'prediction') {
+      if (state.predictions[result.name]) {
+        if (!window.confirm(`${result.name} already submitted. Replace their prediction?`)) return;
+      }
+      save({ ...state, predictions: { ...state.predictions, [result.name]: result.ranking } });
+      setPhase('predict');
+      showToast(`Imported ${result.name}'s prediction`);
+    } else {
+      showToast(`Link type mismatch (got ${result.type})`);
+    }
+    // Run once after load completes; we intentionally don't include state in deps
+    // because we only want to handle the link on initial load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+  if (!loaded) {
+    return (
+      <div className="app">
+        <Header />
+        <div className="card empty-state">
+          <div className="icon">⏳</div>
+          <h4>Loading…</h4>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app">
+      <Header />
+      <PhaseNav phase={phase} setPhase={setPhase} state={state} />
+      {phase === 'setup' && <SetupScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
+      {phase === 'predict' && <PredictScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
+      {phase === 'results' && <ResultsScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
+      {phase === 'leaderboard' && <LeaderboardScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
+      <Toast msg={toastMsg} />
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
