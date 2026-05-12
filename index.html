@@ -616,6 +616,90 @@
   @keyframes toast-in { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
   @keyframes toast-out { to { transform: translate(-50%, 20px); opacity: 0; } }
 
+  /* LIVE PARTY */
+  .live-card {
+    background: linear-gradient(135deg, rgba(255, 45, 146, 0.12), rgba(0, 229, 255, 0.10));
+    border: 1px solid rgba(255, 45, 146, 0.30);
+  }
+  .live-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .live-status.connected {
+    background: rgba(194, 255, 61, 0.15);
+    border: 1px solid var(--lime);
+    color: var(--lime);
+  }
+  .live-status.connected .ind {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--lime);
+    box-shadow: 0 0 8px var(--lime);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .live-status.syncing { color: var(--cyan); border-color: var(--cyan); }
+  .live-status.error { color: #ff7a90; border-color: #ff7a90; background: rgba(255, 60, 80, 0.08); }
+  .live-status.offline { color: var(--ink-dim); border-color: var(--card-border); background: rgba(255, 255, 255, 0.04); }
+
+  /* VIEWER */
+  .viewer-banner {
+    position: sticky; top: 0; z-index: 50;
+    background: var(--bg-deep);
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--card-border);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px;
+    margin: -24px -18px 16px;
+    backdrop-filter: blur(20px);
+  }
+  .viewer-banner h2 {
+    font-family: 'Bowlby One', cursive;
+    font-size: 16px;
+    color: var(--ink);
+  }
+  .viewer-banner .sync-info { font-size: 11px; color: var(--ink-dim); }
+  .viewer-prediction {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .viewer-prediction-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .viewer-prediction-name {
+    font-family: 'Bowlby One', cursive;
+    font-size: 15px;
+    letter-spacing: 0.01em;
+  }
+  .viewer-prediction-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 4px;
+  }
+  .viewer-prediction-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .viewer-prediction-item .pos {
+    font-family: 'Bowlby One', cursive;
+    color: var(--ink-dim);
+    width: 18px;
+  }
+  .viewer-prediction-item.gold { background: linear-gradient(90deg, rgba(255,214,10,0.15), rgba(255,255,255,0.04)); }
+  .viewer-prediction-item.gold .pos { color: var(--gold); }
+
   /* Mobile */
   @media (max-width: 600px) {
     .app { padding: 16px 12px 60px; }
@@ -631,7 +715,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 const ALL_COUNTRIES = [
   { name: 'Albania', flag: '🇦🇱' },
@@ -747,6 +831,64 @@ function parseCode(input) {
   } catch (e) {
     return { ok: false, error: 'Code looks corrupted or incomplete' };
   }
+}
+
+// ---- Live sync via Pantry (https://getpantry.cloud) ----
+// Host writes the state to a basket; viewers poll it every few seconds.
+// Pantry's PUT merges with existing data, so we wrap state in {payload: stringifiedJSON}
+// — that way each PUT fully replaces the payload field instead of deep-merging.
+const PANTRY_BASE = 'https://getpantry.cloud/apiv1/pantry';
+const BASKET_NAME = 'eurovision-party';
+
+async function pantryWrite(pantryId, data) {
+  const url = `${PANTRY_BASE}/${encodeURIComponent(pantryId)}/basket/${BASKET_NAME}`;
+  const body = JSON.stringify({ payload: JSON.stringify(data), ts: Date.now() });
+  // Try PUT first (most calls hit this — basket already exists)
+  let res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  // If basket doesn't exist yet, POST to create it
+  if (res.status === 400 || res.status === 404) {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Pantry write failed (${res.status}): ${text.slice(0, 120)}`);
+  }
+  return true;
+}
+
+async function pantryRead(pantryId) {
+  const url = `${PANTRY_BASE}/${encodeURIComponent(pantryId)}/basket/${BASKET_NAME}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (res.status === 400 || res.status === 404) {
+    // Basket doesn't exist yet — host hasn't started
+    return null;
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Pantry read failed (${res.status}): ${text.slice(0, 120)}`);
+  }
+  const obj = await res.json();
+  if (obj && typeof obj.payload === 'string') {
+    try { return JSON.parse(obj.payload); } catch { return null; }
+  }
+  return null;
+}
+
+// Get the current page's base URL (without hash) for building share links
+function getBaseUrl() {
+  if (typeof window === 'undefined') return '';
+  return window.location.origin + window.location.pathname;
 }
 
 // Score: for each country in player's top 10, find where it actually placed.
@@ -905,7 +1047,7 @@ function ImportCode({ placeholder, onImport, buttonLabel = 'Import' }) {
       return;
     }
     const handled = onImport(result);
-    if (handled === false) return; // caller will show its own toast
+    if (handled === false) return;
     setText('');
   };
   return (
@@ -924,7 +1066,330 @@ function ImportCode({ placeholder, onImport, buttonLabel = 'Import' }) {
   );
 }
 
-function SetupScreen({ state, save, setPhase, toast }) {
+// Live party setup card — host configures Pantry connection here
+function LiveParty({ pantryId, syncStatus, lastSyncAt, onConnect, onDisconnect, toast }) {
+  const [draftId, setDraftId] = useState('');
+  const [testing, setTesting] = useState(false);
+
+  const tryConnect = async () => {
+    const trimmed = draftId.trim();
+    if (!trimmed) { toast('Paste your Pantry ID first'); return; }
+    setTesting(true);
+    try {
+      // Test the ID by attempting a read — if it 404s with "not found" or returns null, that's fine.
+      // We'll create the basket on first write.
+      await pantryRead(trimmed);
+      onConnect(trimmed);
+      toast('Live party connected! ✨');
+      setDraftId('');
+    } catch (e) {
+      toast(`Couldn't reach Pantry: ${e.message.slice(0, 80)}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const shareLink = pantryId ? `${getBaseUrl()}#view=${encodeURIComponent(pantryId)}` : '';
+  const copyShareLink = async () => {
+    try { await navigator.clipboard.writeText(shareLink); toast('Live link copied!'); }
+    catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = shareLink;
+      ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('Live link copied!'); } catch (_) { toast('Copy failed — long-press to select the link'); }
+      document.body.removeChild(ta);
+    }
+  };
+
+  if (!pantryId) {
+    return (
+      <div className="card live-card">
+        <div className="section-header">
+          <h3>📡 Live Party Mode</h3>
+          <span className="live-status offline"><span>OFF</span></span>
+        </div>
+        <div className="help-text" style={{ background: 'rgba(255, 45, 146, 0.06)', borderColor: 'rgba(255, 45, 146, 0.20)' }}>
+          Set this up <b>once</b> and friends can watch the leaderboard live on their phones — no codes to copy. You enter everything on this device; they just open a link.
+        </div>
+        <ol style={{ paddingLeft: 20, fontSize: 14, color: 'var(--ink-dim)', lineHeight: 1.7, marginBottom: 14 }}>
+          <li>Open <a href="https://getpantry.cloud/" target="_blank" rel="noopener" style={{ color: 'var(--cyan)' }}>getpantry.cloud</a> in a new tab.</li>
+          <li>Enter any name + email → "Create Pantry". They'll show you a <b>Pantry ID</b> (a UUID like <code style={{ color: 'var(--cyan)', fontSize: 12 }}>abc12345-...</code>).</li>
+          <li>Copy it and paste below.</li>
+        </ol>
+        <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Your Pantry ID</label>
+        <div className="input-row">
+          <input
+            className="input"
+            placeholder="Paste your Pantry ID here"
+            value={draftId}
+            onChange={e => setDraftId(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && tryConnect()}
+          />
+          <button className="btn btn-primary" onClick={tryConnect} disabled={testing || !draftId.trim()}>
+            {testing ? '...' : 'Connect'}
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--ink-dim)', marginTop: 10, opacity: 0.75 }}>
+          Skip this if you're just playing on one device. Live mode is only needed if friends want to watch on their phones.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card live-card">
+      <div className="section-header">
+        <h3>📡 Live Party Mode</h3>
+        <span className={`live-status ${syncStatus === 'error' ? 'error' : syncStatus === 'syncing' ? 'syncing' : 'connected'}`}>
+          <span className="ind"></span>
+          {syncStatus === 'error' ? 'Error' : syncStatus === 'syncing' ? 'Syncing…' : 'Live'}
+        </span>
+      </div>
+      <div className="help-text" style={{ background: 'rgba(194, 255, 61, 0.06)', borderColor: 'rgba(194, 255, 61, 0.20)' }}>
+        ✓ Connected. Share this link with friends — they'll see everything update live as you add it.
+      </div>
+      <div className="share-code-box">
+        <div className="share-code-text">{shareLink}</div>
+        <button className="copy-btn" onClick={copyShareLink}>🔗 Copy</button>
+      </div>
+      <div className="btn-row">
+        <button className="btn btn-ghost" onClick={() => { if (confirm('Disconnect from live mode? Friends will stop receiving updates.')) onDisconnect(); }}>
+          Disconnect
+        </button>
+        {lastSyncAt && <span style={{ fontSize: 12, color: 'var(--ink-dim)', alignSelf: 'center' }}>Last synced {Math.max(1, Math.round((Date.now() - lastSyncAt) / 1000))}s ago</span>}
+      </div>
+    </div>
+  );
+}
+
+// Read-only view shown to friends when the URL has #view=PANTRY_ID
+function ViewerScreen({ pantryId, toast }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState(null);
+  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const [, setTick] = useState(0);
+
+  // Poll every 5s
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+
+    const poll = async () => {
+      try {
+        const data = await pantryRead(pantryId);
+        if (cancelled) return;
+        if (data && typeof data === 'object') {
+          setState(data);
+          setError(null);
+          setLastSyncAt(Date.now());
+        } else if (state === null) {
+          setError('waiting');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e.message);
+        }
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, 5000);
+      }
+    };
+    poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [pantryId]);
+
+  // Re-render every second so the "last updated" time stays fresh
+  useEffect(() => {
+    const t = setInterval(() => setTick(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const secondsAgo = lastSyncAt ? Math.max(0, Math.round((Date.now() - lastSyncAt) / 1000)) : null;
+
+  if (!state && error === 'waiting') {
+    return (
+      <div className="app">
+        <Header />
+        <div className="card empty-state">
+          <div className="icon">⏳</div>
+          <h4>Waiting for your host</h4>
+          <p>The party hasn't started yet. This page will update automatically once they begin.</p>
+        </div>
+      </div>
+    );
+  }
+  if (!state && error) {
+    return (
+      <div className="app">
+        <Header />
+        <div className="card empty-state">
+          <div className="icon">🔌</div>
+          <h4>Can't connect</h4>
+          <p style={{ fontSize: 13, marginTop: 8 }}>Ask your host to check that they're still connected to the live party.</p>
+          <p style={{ fontSize: 11, marginTop: 12, opacity: 0.6 }}>{error}</p>
+        </div>
+      </div>
+    );
+  }
+  if (!state) {
+    return (
+      <div className="app">
+        <Header />
+        <div className="card empty-state">
+          <div className="icon">⏳</div>
+          <h4>Loading…</h4>
+        </div>
+      </div>
+    );
+  }
+
+  const finalists = state.finalists || [];
+  const predictions = state.predictions || {};
+  const actualResults = state.actualResults || [];
+  const resultsRevealed = state.resultsRevealed && actualResults.length === 10;
+  const playerNames = Object.keys(predictions);
+
+  // Compute scored leaderboard if results revealed
+  let leaderboard = [];
+  if (resultsRevealed) {
+    leaderboard = playerNames.map(name => {
+      const { score, details } = calcScore(predictions[name], actualResults);
+      return { name, score, details };
+    }).sort((a, b) => b.score - a.score);
+  }
+
+  return (
+    <div className="app">
+      <div className="viewer-banner">
+        <div>
+          <h2>🎤 Eurovision Party</h2>
+          <div className="sync-info">
+            {secondsAgo !== null
+              ? `Live · updated ${secondsAgo}s ago`
+              : 'Connecting…'}
+          </div>
+        </div>
+        <span className={`live-status ${error ? 'error' : 'connected'}`}>
+          <span className="ind"></span>
+          {error ? 'Reconnecting' : 'Live'}
+        </span>
+      </div>
+
+      {finalists.length === 0 && (
+        <div className="card empty-state">
+          <div className="icon">🌟</div>
+          <h4>Waiting for finalists</h4>
+          <p>The host hasn't picked the finalists yet. Sit tight!</p>
+        </div>
+      )}
+
+      {resultsRevealed && leaderboard.length > 0 && (
+        <>
+          <div className="card actual-results-card">
+            <div className="section-header"><h3>🏆 Final Top 10</h3></div>
+            <div className="ranking-list">
+              {actualResults.map((country, i) => (
+                <div key={country} className={`ranking-slot filled ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`}>
+                  <div className="rank-num">{i + 1}</div>
+                  <div className="rank-country">
+                    <span className="flag">{flagFor(country)}</span>
+                    <span>{country}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="section-header"><h3>👑 Leaderboard</h3></div>
+            {leaderboard.map((entry, idx) => (
+              <div key={entry.name} className="lb-row" style={{ cursor: 'default' }}>
+                <div className="pos">#{idx + 1}</div>
+                <div className="name">{entry.name}</div>
+                <div className="score">{entry.score}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {actualResults.length > 0 && !resultsRevealed && (
+        <div className="card actual-results-card">
+          <div className="section-header">
+            <h3>🎬 Results coming in…</h3>
+            <span className="badge">{actualResults.length}/10</span>
+          </div>
+          <div className="ranking-list">
+            {actualResults.map((country, i) => (
+              <div key={country} className={`ranking-slot filled ${i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : ''}`}>
+                <div className="rank-num">{i + 1}</div>
+                <div className="rank-country">
+                  <span className="flag">{flagFor(country)}</span>
+                  <span>{country}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {playerNames.length > 0 && (
+        <div className="card">
+          <div className="section-header">
+            <h3>Predictions</h3>
+            <span className="badge">{playerNames.length} player{playerNames.length !== 1 ? 's' : ''}</span>
+          </div>
+          {playerNames.map(name => {
+            const ranking = predictions[name] || [];
+            return (
+              <div key={name} className="viewer-prediction">
+                <div className="viewer-prediction-header">
+                  <div className="viewer-prediction-name">{name}</div>
+                  {resultsRevealed && (
+                    <div className="score" style={{ fontFamily: "'Bowlby One', cursive", color: 'var(--cyan)' }}>
+                      {calcScore(ranking, actualResults).score} pts
+                    </div>
+                  )}
+                </div>
+                <div className="viewer-prediction-list">
+                  {ranking.map((country, i) => (
+                    <div key={i} className={`viewer-prediction-item ${i === 0 ? 'gold' : ''}`}>
+                      <span className="pos">{i + 1}</span>
+                      <span style={{ fontSize: 14 }}>{flagFor(country)}</span>
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{country}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {finalists.length > 0 && playerNames.length === 0 && (
+        <div className="card">
+          <div className="section-header">
+            <h3>Finalists</h3>
+            <span className="badge">{finalists.length}</span>
+          </div>
+          <div className="country-grid">
+            {finalists.map(name => (
+              <div key={name} className="country-chip" style={{ cursor: 'default' }}>
+                <span className="flag">{flagFor(name)}</span>
+                <span>{name}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink-dim)', marginTop: 12, textAlign: 'center' }}>
+            Predictions will appear here as your host enters them.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SetupScreen({ state, save, setPhase, toast, livePantryId, syncStatus, lastSyncAt, onLiveConnect, onLiveDisconnect }) {
   const selected = useMemo(() => new Set(state.finalists), [state.finalists]);
   const [customCountry, setCustomCountry] = useState('');
 
@@ -966,6 +1431,15 @@ function SetupScreen({ state, save, setPhase, toast }) {
 
   return (
     <>
+      <LiveParty
+        pantryId={livePantryId}
+        syncStatus={syncStatus}
+        lastSyncAt={lastSyncAt}
+        onConnect={onLiveConnect}
+        onDisconnect={onLiveDisconnect}
+        toast={toast}
+      />
+
       <div className="card">
         <div className="section-header">
           <div>
@@ -976,27 +1450,6 @@ function SetupScreen({ state, save, setPhase, toast }) {
         <div className="help-text">
           Tap each country that made the final. Eurovision finals typically have <b>26 countries</b>, but any number from 10+ works. You can add custom entries below for anyone not in the list.
         </div>
-
-        {!state.finalistsLocked && (
-          <details className="share-section">
-            <summary>🎟️ Got a setup code from your host? Paste it here</summary>
-            <div className="inner">
-              <ImportCode
-                placeholder="Paste a setup code starting with ES1-..."
-                buttonLabel="Load Finalists"
-                onImport={(r) => {
-                  if (r.type !== 'setup') {
-                    toast("That's a prediction code, not a setup code");
-                    return false;
-                  }
-                  save({ ...state, finalists: r.finalists, finalistsLocked: true });
-                  toast(`Loaded ${r.finalists.length} finalists`);
-                  setPhase('predict');
-                }}
-              />
-            </div>
-          </details>
-        )}
 
         <CountryGrid
           countries={ALL_COUNTRIES}
@@ -1051,25 +1504,6 @@ function SetupScreen({ state, save, setPhase, toast }) {
           <button className="btn btn-danger" onClick={reset}>Reset all</button>
         </div>
       </div>
-
-      {state.finalistsLocked && state.finalists.length > 0 && (
-        <div className="card share-card">
-          <div className="section-header">
-            <h3>📣 Send to Friends</h3>
-            <span className="badge live">Step 1.5</span>
-          </div>
-          <div className="help-text" style={{ background: 'rgba(194, 255, 61, 0.06)', borderColor: 'rgba(194, 255, 61, 0.20)' }}>
-            If you've hosted this file (GitHub Pages, Netlify, etc.) tap <b>Copy link</b> — friends just tap the link and the app opens with finalists loaded. Otherwise <b>Copy code</b>: friends paste it on their Step 1.
-          </div>
-          <ShareCode
-            code={makeSetupCode(state.finalists)}
-            label="Setup code"
-            hint={`Contains ${state.finalists.length} finalists.`}
-            copyLabel="Copy setup code"
-            linkKind="setup"
-          />
-        </div>
-      )}
     </>
   );
 }
@@ -1110,9 +1544,7 @@ function PredictScreen({ state, save, setPhase, toast }) {
   const [name, setName] = useState('');
   const [ranking, setRanking] = useState([]);
   const [editingName, setEditingName] = useState(null);
-  const [lastSubmitted, setLastSubmitted] = useState(null);
 
-  const finalistsSet = useMemo(() => new Set(state.finalists), [state.finalists]);
   const inRankingSet = useMemo(() => new Set(ranking), [ranking]);
   const availableCountries = useMemo(
     () => state.finalists.map(n => ({ name: n, flag: flagFor(n) })),
@@ -1161,22 +1593,15 @@ function PredictScreen({ state, save, setPhase, toast }) {
     }
     save({ ...state, predictions: nextPredictions });
     toast(`Saved ${trimmed}'s prediction!`);
-    setLastSubmitted({ name: trimmed, ranking: finalRanking });
     setName('');
     setRanking([]);
     setEditingName(null);
-    // Scroll to share-back card
-    setTimeout(() => {
-      const el = document.getElementById('share-back-card');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 50);
   };
 
   const startEdit = (playerName) => {
     setName(playerName);
     setRanking([...state.predictions[playerName]]);
     setEditingName(playerName);
-    setLastSubmitted(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -1190,29 +1615,6 @@ function PredictScreen({ state, save, setPhase, toast }) {
       setName('');
       setRanking([]);
     }
-    if (lastSubmitted?.name === playerName) setLastSubmitted(null);
-  };
-
-  const handleImportPrediction = (r) => {
-    if (r.type === 'setup') {
-      toast("That's a setup code — go to Step 1 to load it");
-      return false;
-    }
-    if (r.type !== 'prediction') return false;
-    // Validate ranking countries are in finalists
-    const finalistsSetLocal = new Set(state.finalists);
-    const missing = r.ranking.filter(c => !finalistsSetLocal.has(c));
-    if (missing.length > 0) {
-      if (!confirm(`This prediction includes countries not in your finalists list (${missing.join(', ')}). Import anyway?`)) return false;
-    }
-    if (r.ranking.length !== 10) {
-      if (!confirm(`This prediction has ${r.ranking.length} countries (expected 10). Import anyway?`)) return false;
-    }
-    if (state.predictions[r.name]) {
-      if (!confirm(`${r.name} already exists. Replace their prediction?`)) return false;
-    }
-    save({ ...state, predictions: { ...state.predictions, [r.name]: r.ranking } });
-    toast(`Imported ${r.name}'s prediction`);
   };
 
   const players = Object.keys(state.predictions);
@@ -1227,7 +1629,7 @@ function PredictScreen({ state, save, setPhase, toast }) {
           {editingName && <span className="badge" style={{ background: 'rgba(0, 229, 255, 0.15)', borderColor: 'var(--cyan)', color: 'var(--cyan)' }}>Editing {editingName}</span>}
         </div>
         <div className="help-text">
-          Type the player's name, then tap finalists to fill their top 10 (1 = winner, 10 = tenth place). Use the arrows to reorder. Or paste a friend's <b>prediction code</b> below to import their pick instead.
+          Type a player's name, then tap finalists to fill their top 10 (1 = winner, 10 = tenth place). Use the arrows to reorder, then <b>Save</b> and move on to the next person.
         </div>
 
         <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Player name</label>
@@ -1270,55 +1672,6 @@ function PredictScreen({ state, save, setPhase, toast }) {
           )}
         </div>
       </div>
-
-      {lastSubmitted && (
-        <div className="card share-card" id="share-back-card">
-          <div className="section-header">
-            <h3>✨ Send Your Prediction</h3>
-            <span className="badge live">{lastSubmitted.name}</span>
-          </div>
-          <div className="help-text" style={{ background: 'rgba(194, 255, 61, 0.06)', borderColor: 'rgba(194, 255, 61, 0.20)' }}>
-            Saved! Send this to whoever's hosting the leaderboard. <b>Link</b> auto-imports when tapped; <b>code</b> gets pasted manually.
-          </div>
-          <ShareCode
-            code={makePredictionCode(lastSubmitted.name, lastSubmitted.ranking)}
-            label={`${lastSubmitted.name}'s prediction code`}
-            copyLabel="Copy prediction"
-            linkKind="pred"
-          />
-          <div className="btn-row">
-            <button className="btn btn-ghost" onClick={() => setLastSubmitted(null)}>Dismiss</button>
-          </div>
-        </div>
-      )}
-
-      <details className="share-section">
-        <summary>📥 Import a prediction code from a friend</summary>
-        <div className="inner">
-          <div style={{ fontSize: 13, color: 'var(--ink-dim)', marginBottom: 10, lineHeight: 1.5 }}>
-            Paste a code that starts with <code style={{ color: 'var(--cyan)' }}>EP1-</code> and it'll be added to the leaderboard.
-          </div>
-          <ImportCode
-            placeholder="Paste a prediction code..."
-            buttonLabel="Import Prediction"
-            onImport={handleImportPrediction}
-          />
-        </div>
-      </details>
-
-      {state.finalistsLocked && (
-        <details className="share-section">
-          <summary>🎟️ Show setup code (re-share with late arrivals)</summary>
-          <div className="inner">
-            <ShareCode
-              code={makeSetupCode(state.finalists)}
-              hint="Friends paste this on Step 1 (or tap the link) to load the same finalists list."
-              copyLabel="Copy setup code"
-              linkKind="setup"
-            />
-          </div>
-        </details>
-      )}
 
       {players.length > 0 && (
         <div className="card">
@@ -1557,19 +1910,37 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
   );
 }
 
+// Constant for the host's pantry ID localStorage key (separate from game state)
+const LIVE_KEY = 'eurovision:livePantryId';
+
 function App() {
+  // Detect viewer mode up-front from URL hash
+  const viewerPantryId = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const m = (window.location.hash || '').match(/^#view=(.+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }, []);
+
   const [phase, setPhase] = useState('setup');
   const [state, setState] = useState(DEFAULT_STATE);
   const [loaded, setLoaded] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
+
+  // Live sync (host side)
+  const [livePantryId, setLivePantryId] = useState(null);
+  const [syncStatus, setSyncStatus] = useState('connected'); // 'connected' | 'syncing' | 'error'
+  const [lastSyncAt, setLastSyncAt] = useState(null);
+  const syncTimerRef = useRef(null);
+  const pendingPushRef = useRef(null);
 
   const showToast = useCallback((msg) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 3000);
   }, []);
 
-  // Load from storage
+  // Load from local storage (host mode only — viewer doesn't need it)
   useEffect(() => {
+    if (viewerPantryId) { setLoaded(true); return; }
     (async () => {
       try {
         const raw = await storage.get(STORAGE_KEY);
@@ -1581,57 +1952,70 @@ function App() {
           else if (Object.keys(parsed.predictions || {}).length > 0) setPhase('predict');
           else if (parsed.finalistsLocked) setPhase('predict');
         }
+        // Load pantry ID separately
+        const pid = await storage.get(LIVE_KEY);
+        if (pid) setLivePantryId(pid);
       } catch (e) { /* fresh start */ }
       setLoaded(true);
     })();
-  }, []);
+  }, [viewerPantryId]);
+
+  const pushToLive = useCallback(async (data) => {
+    if (!livePantryId) return;
+    // Debounce: cancel any pending push and schedule a new one
+    if (pendingPushRef.current) clearTimeout(pendingPushRef.current);
+    pendingPushRef.current = setTimeout(async () => {
+      setSyncStatus('syncing');
+      try {
+        await pantryWrite(livePantryId, data);
+        setSyncStatus('connected');
+        setLastSyncAt(Date.now());
+      } catch (e) {
+        setSyncStatus('error');
+        console.error('Pantry push failed:', e);
+      }
+    }, 500);
+  }, [livePantryId]);
 
   const save = useCallback(async (next) => {
     setState(next);
     try {
       await storage.set(STORAGE_KEY, JSON.stringify(next));
     } catch (e) { console.error('save failed', e); }
+    // Mirror to Pantry if connected
+    pushToLive(next);
+  }, [pushToLive]);
+
+  // When pantryId becomes connected (or changes), push current state immediately
+  useEffect(() => {
+    if (livePantryId && loaded && !viewerPantryId) {
+      pushToLive(state);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePantryId]);
+
+  const handleLiveConnect = useCallback(async (pid) => {
+    setLivePantryId(pid);
+    try { await storage.set(LIVE_KEY, pid); } catch (e) {}
   }, []);
 
-  // Handle shareable links: #setup=... or #pred=... in the URL
-  useEffect(() => {
-    if (!loaded) return;
-    if (typeof window === 'undefined') return;
-    const hash = window.location.hash || '';
-    const m = hash.match(/^#(setup|pred)=(.+)$/);
-    if (!m) return;
-    const [, kind, encoded] = m;
-    // Clear the hash first so reloads don't re-trigger
-    try {
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    } catch (e) { /* ignore */ }
+  const handleLiveDisconnect = useCallback(async () => {
+    setLivePantryId(null);
+    setSyncStatus('connected');
+    try { await storage.set(LIVE_KEY, ''); } catch (e) {}
+  }, []);
 
-    const result = parseCode(encoded);
-    if (!result.ok) {
-      showToast(`Couldn't read shared link: ${result.error}`);
-      return;
-    }
-    if (kind === 'setup' && result.type === 'setup') {
-      if (state.finalistsLocked && state.finalists.length > 0) {
-        if (!window.confirm(`A setup link was opened with ${result.finalists.length} finalists. Replace your current ${state.finalists.length} finalists?`)) return;
-      }
-      save({ ...state, finalists: result.finalists, finalistsLocked: true });
-      setPhase('predict');
-      showToast(`Loaded ${result.finalists.length} finalists — make your pick!`);
-    } else if (kind === 'pred' && result.type === 'prediction') {
-      if (state.predictions[result.name]) {
-        if (!window.confirm(`${result.name} already submitted. Replace their prediction?`)) return;
-      }
-      save({ ...state, predictions: { ...state.predictions, [result.name]: result.ranking } });
-      setPhase('predict');
-      showToast(`Imported ${result.name}'s prediction`);
-    } else {
-      showToast(`Link type mismatch (got ${result.type})`);
-    }
-    // Run once after load completes; we intentionally don't include state in deps
-    // because we only want to handle the link on initial load.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
+  // ---- Render branches ----
+
+  // Viewer mode: read-only, polls Pantry
+  if (viewerPantryId) {
+    return (
+      <>
+        <ViewerScreen pantryId={viewerPantryId} toast={showToast} />
+        <Toast msg={toastMsg} />
+      </>
+    );
+  }
 
   if (!loaded) {
     return (
@@ -1649,7 +2033,19 @@ function App() {
     <div className="app">
       <Header />
       <PhaseNav phase={phase} setPhase={setPhase} state={state} />
-      {phase === 'setup' && <SetupScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
+      {phase === 'setup' && (
+        <SetupScreen
+          state={state}
+          save={save}
+          setPhase={setPhase}
+          toast={showToast}
+          livePantryId={livePantryId}
+          syncStatus={syncStatus}
+          lastSyncAt={lastSyncAt}
+          onLiveConnect={handleLiveConnect}
+          onLiveDisconnect={handleLiveDisconnect}
+        />
+      )}
       {phase === 'predict' && <PredictScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
       {phase === 'results' && <ResultsScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
       {phase === 'leaderboard' && <LeaderboardScreen state={state} save={save} setPhase={setPhase} toast={showToast} />}
