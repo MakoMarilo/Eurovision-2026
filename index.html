@@ -2172,41 +2172,43 @@ function App() {
     pendingPushRef.current = setTimeout(async () => {
       setSyncStatus('syncing');
       try {
-        // Read latest from Pantry first so a viewer-submitted prediction (added
-        // between our last poll and now) doesn't get clobbered by this push.
+        // Read latest from Pantry first. If the read fails, we MUST abort the write —
+        // otherwise we'd silently overwrite any viewer-submitted predictions we haven't
+        // polled yet, and they'd disappear from the leaderboard.
+        const remote = await pantryRead(livePantryId);
         let toWrite = data;
-        try {
-          const remote = await pantryRead(livePantryId);
-          if (remote && remote.predictions) {
-            // Names the host has explicitly deleted; never re-add these
-            const removed = new Set(data.removedPredictions || []);
-            const remoteOnlyPreds = {};
-            for (const [name, ranking] of Object.entries(remote.predictions)) {
-              if (removed.has(name)) continue;
-              if (!data.predictions || !(name in data.predictions)) {
-                remoteOnlyPreds[name] = ranking;
-              }
-            }
-            if (Object.keys(remoteOnlyPreds).length > 0) {
-              toWrite = {
-                ...data,
-                predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
-              };
-              // Also reflect these in local state so they show up in the host UI
-              setState(prev => ({
-                ...prev,
-                predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
-              }));
-              try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
+        if (remote && remote.predictions) {
+          // Names the host has explicitly deleted; never re-add these
+          const removed = new Set(data.removedPredictions || []);
+          const remoteOnlyPreds = {};
+          for (const [name, ranking] of Object.entries(remote.predictions)) {
+            if (removed.has(name)) continue;
+            if (!data.predictions || !(name in data.predictions)) {
+              remoteOnlyPreds[name] = ranking;
             }
           }
-        } catch (e) { /* if the read fails, just push our local state */ }
+          if (Object.keys(remoteOnlyPreds).length > 0) {
+            toWrite = {
+              ...data,
+              predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
+            };
+            // Also reflect these in local state so they show up in the host UI
+            setState(prev => ({
+              ...prev,
+              predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
+            }));
+            try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
+          }
+        }
         await pantryWrite(livePantryId, toWrite);
         setSyncStatus('connected');
         setLastSyncAt(Date.now());
       } catch (e) {
+        // Either the read or the write failed. Either way, do NOT push local state
+        // blindly — that risks overwriting unpolled viewer submissions. The next state
+        // change will trigger another sync attempt automatically.
         setSyncStatus('error');
-        console.error('Pantry push failed:', e);
+        console.error('Pantry sync failed (will retry on next change):', e);
       }
     }, 500);
   }, [livePantryId]);
