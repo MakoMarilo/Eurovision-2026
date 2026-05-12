@@ -792,6 +792,7 @@ const DEFAULT_STATE = {
   actualResults: [],
   resultsRevealed: false,
   predictions: {}, // { name: [country, country, ...] }
+  removedPredictions: [], // names the host explicitly deleted (tombstones, so sync doesn't bring them back)
 };
 
 // ---- Share-code encoding ----
@@ -1209,7 +1210,10 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
       if (savedName && savedName !== trimmed) delete nextPredictions[savedName];
       nextPredictions[trimmed] = ranking;
 
-      const merged = { ...fresh, predictions: nextPredictions };
+      // Clear any tombstone for this name — re-submitting un-removes them
+      const nextRemoved = (fresh.removedPredictions || []).filter(n => n !== trimmed && n !== savedName);
+
+      const merged = { ...fresh, predictions: nextPredictions, removedPredictions: nextRemoved };
       await pantryWrite(pantryId, merged);
       toast('Submitted! The host can see it now.');
       onSubmitted(trimmed, ranking);
@@ -1756,7 +1760,9 @@ function PredictScreen({ state, save, setPhase, toast }) {
     if (editingName && editingName !== trimmed) {
       delete nextPredictions[editingName];
     }
-    save({ ...state, predictions: nextPredictions });
+    // If this name was previously tombstoned, clear it — adding them back un-removes them
+    const removed = (state.removedPredictions || []).filter(n => n !== trimmed);
+    save({ ...state, predictions: nextPredictions, removedPredictions: removed });
     toast(`Saved ${trimmed}'s prediction!`);
     setName('');
     setRanking([]);
@@ -1774,7 +1780,12 @@ function PredictScreen({ state, save, setPhase, toast }) {
     if (!confirm(`Remove ${playerName}'s prediction?`)) return;
     const next = { ...state.predictions };
     delete next[playerName];
-    save({ ...state, predictions: next });
+    // Record the deletion as a tombstone so the sync layer doesn't pull it back
+    const removed = (state.removedPredictions || []).filter(n => n !== playerName);
+    removed.push(playerName);
+    // Cap at last 50 to keep the list bounded
+    const capped = removed.slice(-50);
+    save({ ...state, predictions: next, removedPredictions: capped });
     if (editingName === playerName) {
       setEditingName(null);
       setName('');
@@ -2138,8 +2149,11 @@ function App() {
         try {
           const remote = await pantryRead(livePantryId);
           if (remote && remote.predictions) {
+            // Names the host has explicitly deleted; never re-add these
+            const removed = new Set(data.removedPredictions || []);
             const remoteOnlyPreds = {};
             for (const [name, ranking] of Object.entries(remote.predictions)) {
+              if (removed.has(name)) continue;
               if (!data.predictions || !(name in data.predictions)) {
                 remoteOnlyPreds[name] = ranking;
               }
@@ -2202,9 +2216,12 @@ function App() {
         const current = stateRef.current;
         const localPreds = current.predictions || {};
         const remotePreds = remote.predictions;
+        // Names the host has explicitly deleted; never re-add these
+        const removed = new Set(current.removedPredictions || []);
         let changed = false;
         const merged = { ...localPreds };
         for (const [name, ranking] of Object.entries(remotePreds)) {
+          if (removed.has(name)) continue;
           const localR = localPreds[name];
           if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
             merged[name] = ranking;
