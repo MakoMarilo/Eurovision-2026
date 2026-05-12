@@ -1110,7 +1110,7 @@ function LiveParty({ pantryId, syncStatus, lastSyncAt, onConnect, onDisconnect, 
           <span className="live-status offline"><span>OFF</span></span>
         </div>
         <div className="help-text" style={{ background: 'rgba(255, 45, 146, 0.06)', borderColor: 'rgba(255, 45, 146, 0.20)' }}>
-          Set this up <b>once</b> and friends can watch the leaderboard live on their phones — no codes to copy. You enter everything on this device; they just open a link.
+          Set this up <b>once</b> and friends can watch the leaderboard live on their phones — and submit their own predictions right there if they want. You enter everything else on this device.
         </div>
         <ol style={{ paddingLeft: 20, fontSize: 14, color: 'var(--ink-dim)', lineHeight: 1.7, marginBottom: 14 }}>
           <li>Open <a href="https://getpantry.cloud/" target="_blank" rel="noopener" style={{ color: 'var(--cyan)' }}>getpantry.cloud</a> in a new tab.</li>
@@ -1163,12 +1163,154 @@ function LiveParty({ pantryId, syncStatus, lastSyncAt, onConnect, onDisconnect, 
   );
 }
 
+// Form for viewers to submit their own prediction. Reads latest state from Pantry
+// before writing, so a host edit happening at the same moment doesn't get overwritten.
+function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, onSubmitted, toast }) {
+  const [name, setName] = useState(savedName || '');
+  const [ranking, setRanking] = useState(savedRanking ? [...savedRanking] : []);
+  const [submitting, setSubmitting] = useState(false);
+  const [editing, setEditing] = useState(!savedName);
+
+  const inSet = useMemo(() => new Set(ranking), [ranking]);
+  const availableCountries = useMemo(
+    () => (finalists || []).map(n => ({ name: n, flag: flagFor(n) })),
+    [finalists]
+  );
+
+  const addCountry = (c) => {
+    if (ranking.length >= 10) { toast('Top 10 full — remove one first'); return; }
+    if (!inSet.has(c)) setRanking([...ranking, c]);
+  };
+  const removeAt = (i) => setRanking(ranking.filter((_, j) => j !== i));
+  const moveAt = (from, to) => {
+    if (to < 0 || to >= ranking.length) return;
+    const next = [...ranking];
+    [next[from], next[to]] = [next[to], next[from]];
+    setRanking(next);
+  };
+  const handleToggle = (c) => inSet.has(c) ? setRanking(ranking.filter(x => x !== c)) : addCountry(c);
+
+  const submit = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) { toast('Enter your name first'); return; }
+    if (ranking.length !== 10) { toast(`Pick ${10 - ranking.length} more`); return; }
+    setSubmitting(true);
+    try {
+      // Read FRESH state from Pantry right before writing, so we don't overwrite
+      // host edits made in the last few seconds.
+      const fresh = await pantryRead(pantryId);
+      if (!fresh) {
+        toast('Cannot save — the party data has disappeared. Ask your host to check.');
+        setSubmitting(false);
+        return;
+      }
+      // If they renamed, remove the old name to avoid duplicate entries
+      const nextPredictions = { ...(fresh.predictions || {}) };
+      if (savedName && savedName !== trimmed) delete nextPredictions[savedName];
+      nextPredictions[trimmed] = ranking;
+
+      const merged = { ...fresh, predictions: nextPredictions };
+      await pantryWrite(pantryId, merged);
+      toast('Submitted! The host can see it now.');
+      onSubmitted(trimmed, ranking);
+      setEditing(false);
+    } catch (e) {
+      toast(`Couldn't submit: ${(e.message || '').slice(0, 80)}`);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Compact "already submitted" view — collapsed by default
+  if (!editing && savedName && savedRanking) {
+    return (
+      <div className="card share-card">
+        <div className="section-header">
+          <h3>✅ Your prediction is in</h3>
+          <span className="live-status connected"><span className="ind"></span>Saved as {savedName}</span>
+        </div>
+        <div className="viewer-prediction-list" style={{ marginTop: 10 }}>
+          {savedRanking.map((country, i) => (
+            <div key={i} className={`viewer-prediction-item ${i === 0 ? 'gold' : ''}`}>
+              <span className="pos">{i + 1}</span>
+              <span style={{ fontSize: 14 }}>{flagFor(country)}</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{country}</span>
+            </div>
+          ))}
+        </div>
+        <div className="btn-row">
+          <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit my prediction</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show the form
+  return (
+    <div className="card share-card">
+      <div className="section-header">
+        <h3>📝 Submit Your Prediction</h3>
+        <span className="badge">{ranking.length}/10</span>
+      </div>
+      <div className="help-text" style={{ background: 'rgba(255, 45, 146, 0.06)', borderColor: 'rgba(255, 45, 146, 0.20)' }}>
+        Pick your top 10 in order (1 = winner). It'll show up on the host's screen right away, and your scoring will appear here when the actual results come in.
+      </div>
+
+      <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Your name</label>
+      <input
+        className="input"
+        placeholder="e.g. Mako"
+        value={name}
+        onChange={e => setName(e.target.value)}
+        style={{ marginBottom: 18 }}
+      />
+
+      <div className="section-header">
+        <h3>Your Top 10</h3>
+        <span className="badge">{ranking.length}/10</span>
+      </div>
+      <RankingList ranking={ranking} onMove={moveAt} onRemove={removeAt} />
+
+      <div className="section-header" style={{ marginTop: 22 }}>
+        <h3>Tap to add</h3>
+        <span className="badge">{(finalists?.length || 0) - ranking.length} left</span>
+      </div>
+      {availableCountries.length > 0 ? (
+        <CountryGrid countries={availableCountries} selectedSet={inSet} onToggle={handleToggle} />
+      ) : (
+        <div className="empty-state" style={{ padding: 24 }}>
+          <div className="icon">⏳</div>
+          <p>Waiting for the host to set up the finalists…</p>
+        </div>
+      )}
+
+      <div className="btn-row">
+        <button className="btn btn-primary" onClick={submit} disabled={submitting || ranking.length !== 10 || !name.trim()}>
+          {submitting ? 'Saving…' : (savedName ? 'Update Prediction' : 'Submit Prediction')}
+        </button>
+        {savedName && (
+          <button className="btn btn-ghost" onClick={() => {
+            setName(savedName);
+            setRanking([...savedRanking]);
+            setEditing(false);
+          }}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Read-only view shown to friends when the URL has #view=PANTRY_ID
 function ViewerScreen({ pantryId, toast }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
   const [lastSyncAt, setLastSyncAt] = useState(null);
   const [, setTick] = useState(0);
+  // Track this viewer's own prediction in localStorage so the form remembers them across refreshes
+  const VIEWER_ME_KEY = `eurovision:viewer:${pantryId}`;
+  const [myName, setMyName] = useState(() => {
+    try { return localStorage.getItem(VIEWER_ME_KEY) || null; } catch { return null; }
+  });
 
   // Poll every 5s
   useEffect(() => {
@@ -1283,6 +1425,29 @@ function ViewerScreen({ pantryId, toast }) {
         </div>
       )}
 
+      {finalists.length > 0 && !resultsRevealed && (
+        <ViewerPredictionForm
+          pantryId={pantryId}
+          finalists={finalists}
+          savedName={myName}
+          savedRanking={myName ? (predictions[myName] || null) : null}
+          onSubmitted={(submittedName, submittedRanking) => {
+            // Save locally so the form remembers across refreshes
+            try { localStorage.setItem(VIEWER_ME_KEY, submittedName); } catch {}
+            setMyName(submittedName);
+            // Optimistically update local state so it shows up immediately
+            setState(prev => prev ? {
+              ...prev,
+              predictions: {
+                ...(prev.predictions || {}),
+                ...((myName && myName !== submittedName) ? Object.fromEntries(Object.entries(prev.predictions || {}).filter(([k]) => k !== myName)) : prev.predictions || {}),
+                [submittedName]: submittedRanking,
+              },
+            } : prev);
+          }}
+          toast={toast}
+        />
+      )}
       {resultsRevealed && leaderboard.length > 0 && (
         <>
           <div className="card actual-results-card">
@@ -1967,7 +2132,33 @@ function App() {
     pendingPushRef.current = setTimeout(async () => {
       setSyncStatus('syncing');
       try {
-        await pantryWrite(livePantryId, data);
+        // Read latest from Pantry first so a viewer-submitted prediction (added
+        // between our last poll and now) doesn't get clobbered by this push.
+        let toWrite = data;
+        try {
+          const remote = await pantryRead(livePantryId);
+          if (remote && remote.predictions) {
+            const remoteOnlyPreds = {};
+            for (const [name, ranking] of Object.entries(remote.predictions)) {
+              if (!data.predictions || !(name in data.predictions)) {
+                remoteOnlyPreds[name] = ranking;
+              }
+            }
+            if (Object.keys(remoteOnlyPreds).length > 0) {
+              toWrite = {
+                ...data,
+                predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
+              };
+              // Also reflect these in local state so they show up in the host UI
+              setState(prev => ({
+                ...prev,
+                predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
+              }));
+              try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
+            }
+          }
+        } catch (e) { /* if the read fails, just push our local state */ }
+        await pantryWrite(livePantryId, toWrite);
         setSyncStatus('connected');
         setLastSyncAt(Date.now());
       } catch (e) {
@@ -1993,6 +2184,48 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePantryId]);
+
+  // Host-side polling: pull from Pantry every 8s and merge in any new/updated predictions
+  // that viewers may have submitted on their phones. We use a ref to read current state
+  // so we don't restart the polling loop on every state change.
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  useEffect(() => {
+    if (!livePantryId || viewerPantryId || !loaded) return;
+    let cancelled = false;
+    let timer = null;
+    const poll = async () => {
+      try {
+        const remote = await pantryRead(livePantryId);
+        if (cancelled || !remote || !remote.predictions) return;
+        const current = stateRef.current;
+        const localPreds = current.predictions || {};
+        const remotePreds = remote.predictions;
+        let changed = false;
+        const merged = { ...localPreds };
+        for (const [name, ranking] of Object.entries(remotePreds)) {
+          const localR = localPreds[name];
+          if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
+            merged[name] = ranking;
+            changed = true;
+          }
+        }
+        if (changed) {
+          const newState = { ...current, predictions: merged };
+          setState(newState);
+          try { await storage.set(STORAGE_KEY, JSON.stringify(newState)); } catch (e) {}
+          // Don't re-push — we just pulled this from Pantry, pushing would be a no-op churn.
+        }
+      } catch (e) {
+        // Ignore poll errors silently — we'll try again next tick
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, 8000);
+      }
+    };
+    poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [livePantryId, viewerPantryId, loaded]);
 
   const handleLiveConnect = useCallback(async (pid) => {
     setLivePantryId(pid);
