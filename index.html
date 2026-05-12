@@ -897,7 +897,7 @@ function getBaseUrl() {
 // If actual is outside top 10 (or country not in finals at all), 0 points
 // Max 100 (perfect prediction)
 function calcScore(prediction, actual) {
-  if (!actual || actual.length === 0) return 0;
+  if (!actual || actual.length === 0) return { score: 0, details: [] };
   let score = 0;
   const details = [];
   prediction.forEach((country, predIdx) => {
@@ -914,6 +914,29 @@ function calcScore(prediction, actual) {
     }
   });
   return { score, details };
+}
+
+// Rank players with a tie-breaker cascade:
+//   1. Total score (desc) — main ranking
+//   2. Number of exact-position matches (desc) — more "fully right" wins
+//   3. Position of the actual winner in player's list (asc) — closer to calling the winner wins
+//   4. Name (asc) — final deterministic fallback
+function rankPlayers(predictions, actualResults) {
+  const winner = (actualResults && actualResults[0]) || null;
+  const list = Object.entries(predictions || {}).map(([name, pred]) => {
+    const { score, details } = calcScore(pred, actualResults);
+    const exactMatches = details.filter(d => d.pts === 10).length;
+    const winnerIdx = winner ? pred.indexOf(winner) : -1;
+    const winnerPos = winnerIdx >= 0 ? winnerIdx + 1 : 999; // 999 = not in their top 10
+    return { name, prediction: pred, score, details, exactMatches, winnerPos };
+  });
+  list.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (b.exactMatches !== a.exactMatches) return b.exactMatches - a.exactMatches;
+    if (a.winnerPos !== b.winnerPos) return a.winnerPos - b.winnerPos;
+    return a.name.localeCompare(b.name);
+  });
+  return list;
 }
 
 function Toast({ msg }) {
@@ -1398,10 +1421,7 @@ function ViewerScreen({ pantryId, toast }) {
   // Compute scored leaderboard if results revealed
   let leaderboard = [];
   if (resultsRevealed) {
-    leaderboard = playerNames.map(name => {
-      const { score, details } = calcScore(predictions[name], actualResults);
-      return { name, score, details };
-    }).sort((a, b) => b.score - a.score);
+    leaderboard = rankPlayers(predictions, actualResults);
   }
 
   return (
@@ -1474,7 +1494,14 @@ function ViewerScreen({ pantryId, toast }) {
             {leaderboard.map((entry, idx) => (
               <div key={entry.name} className="lb-row" style={{ cursor: 'default' }}>
                 <div className="pos">#{idx + 1}</div>
-                <div className="name">{entry.name}</div>
+                <div className="name">
+                  {entry.name}
+                  {entry.exactMatches > 0 && (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--lime)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                      ✓ {entry.exactMatches} exact
+                    </span>
+                  )}
+                </div>
                 <div className="score">{entry.score}</div>
               </div>
             ))}
@@ -1956,12 +1983,7 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
   const [expanded, setExpanded] = useState(null);
 
   const scored = useMemo(() => {
-    const list = Object.entries(state.predictions).map(([name, pred]) => {
-      const { score, details } = calcScore(pred, state.actualResults);
-      return { name, prediction: pred, score, details };
-    });
-    list.sort((a, b) => b.score - a.score);
-    return list;
+    return rankPlayers(state.predictions, state.actualResults);
   }, [state.predictions, state.actualResults]);
 
   const playAgain = () => {
@@ -2035,7 +2057,7 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
           <span className="badge">Max 100 pts</span>
         </div>
         <div className="help-text">
-          <b>Scoring:</b> For each country in your top 10 that's also in the actual top 10, you get <b>10 − |off-by|</b> points. Exact match = 10 pts, off by 1 = 9 pts, off by 9 = 1 pt, missed = 0 pts. <b>Perfect = 100.</b> Tap a row to see the breakdown.
+          <b>Scoring:</b> For each country in your top 10 that's also in the actual top 10, you get <b>10 − |off-by|</b> points. Exact match = 10 pts, off by 1 = 9 pts, off by 9 = 1 pt, missed = 0 pts. <b>Perfect = 100.</b> Tap a row to see the breakdown. <b>Ties</b> are broken by: most exact matches → closest to predicting the winner → alphabetical.
         </div>
         {scored.map((entry, idx) => (
           <React.Fragment key={entry.name}>
@@ -2044,7 +2066,14 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
               onClick={() => setExpanded(expanded === entry.name ? null : entry.name)}
             >
               <div className="pos">#{idx + 1}</div>
-              <div className="name">{entry.name}</div>
+              <div className="name">
+                {entry.name}
+                {entry.exactMatches > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--lime)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                    ✓ {entry.exactMatches} exact
+                  </span>
+                )}
+              </div>
               <div className="score">{entry.score}</div>
               <div className="expand">▼</div>
             </div>
