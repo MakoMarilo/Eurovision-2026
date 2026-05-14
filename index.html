@@ -282,6 +282,8 @@
   .ranking-slot.gold .rank-num { background: linear-gradient(135deg, var(--gold), #ff9a3d); color: #2a1700; }
   .ranking-slot.silver .rank-num { background: linear-gradient(135deg, #e8e8ff, #b0b0d8); color: #15152a; }
   .ranking-slot.bronze .rank-num { background: linear-gradient(135deg, #d8954a, #8a4a20); color: #fff2e0; }
+  .ranking-slot.bottom-last { background: linear-gradient(90deg, rgba(255, 60, 80, 0.12), rgba(255, 255, 255, 0.04)); border-color: rgba(255, 60, 80, 0.30); }
+  .ranking-slot.bottom-last .rank-num { background: linear-gradient(135deg, #ff3c50, #8a1a30); color: #ffe5e8; }
   .rank-country { flex: 1; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
   .rank-country .flag { font-size: 22px; }
   .rank-country .placeholder { color: var(--ink-dim); font-weight: 400; font-style: italic; }
@@ -790,8 +792,10 @@ const DEFAULT_STATE = {
   finalists: [],
   finalistsLocked: false,
   actualResults: [],
+  actualBottom: [], // [last, 2nd-to-last, 3rd-to-last]
   resultsRevealed: false,
-  predictions: {}, // { name: [country, country, ...] }
+  predictions: {}, // { name: [country, country, ...] } — top 10
+  bottomPredictions: {}, // { name: [country, country, country] } — bottom 3
   removedPredictions: [], // names the host explicitly deleted (tombstones, so sync doesn't bring them back)
 };
 
@@ -916,19 +920,54 @@ function calcScore(prediction, actual) {
   return { score, details };
 }
 
+// Bottom-3 scoring: same formula as top 10, but only 3 positions.
+// position 1 in the array = last place, 2 = 2nd-to-last, 3 = 3rd-to-last.
+// Max diff is 2 (off by 2 = 8 pts). Country not in actual bottom 3 = 0 pts.
+// Max bottom score = 30 (perfect).
+function calcBottomScore(prediction, actualBottom) {
+  if (!prediction || prediction.length === 0) return { score: 0, details: [] };
+  if (!actualBottom || actualBottom.length === 0) return { score: 0, details: [] };
+  let score = 0;
+  const details = [];
+  prediction.forEach((country, predIdx) => {
+    const predPos = predIdx + 1; // 1=last, 2=2nd-to-last, 3=3rd-to-last
+    const actualIdx = actualBottom.indexOf(country);
+    if (actualIdx >= 0) {
+      const actualPos = actualIdx + 1;
+      const diff = Math.abs(predPos - actualPos);
+      const pts = Math.max(0, 10 - diff);
+      score += pts;
+      details.push({ country, predPos, actualPos, pts });
+    } else {
+      details.push({ country, predPos, actualPos: null, pts: 0 });
+    }
+  });
+  return { score, details };
+}
+
 // Rank players with a tie-breaker cascade:
-//   1. Total score (desc) — main ranking
-//   2. Number of exact-position matches (desc) — more "fully right" wins
-//   3. Position of the actual winner in player's list (asc) — closer to calling the winner wins
+//   1. Total score (top + bottom, desc) — main ranking
+//   2. Number of exact-position matches across both groups (desc)
+//   3. Position of the actual winner in player's top-10 list (asc)
 //   4. Name (asc) — final deterministic fallback
-function rankPlayers(predictions, actualResults) {
+function rankPlayers(predictions, actualResults, bottomPredictions, actualBottom) {
   const winner = (actualResults && actualResults[0]) || null;
+  bottomPredictions = bottomPredictions || {};
   const list = Object.entries(predictions || {}).map(([name, pred]) => {
-    const { score, details } = calcScore(pred, actualResults);
-    const exactMatches = details.filter(d => d.pts === 10).length;
+    const { score: topScore, details } = calcScore(pred, actualResults);
+    const bottomPred = bottomPredictions[name] || [];
+    const { score: bottomScore, details: bottomDetails } = calcBottomScore(bottomPred, actualBottom);
+    const score = topScore + bottomScore;
+    const exactMatches = details.filter(d => d.pts === 10).length
+                       + bottomDetails.filter(d => d.pts === 10).length;
     const winnerIdx = winner ? pred.indexOf(winner) : -1;
     const winnerPos = winnerIdx >= 0 ? winnerIdx + 1 : 999; // 999 = not in their top 10
-    return { name, prediction: pred, score, details, exactMatches, winnerPos };
+    return {
+      name, prediction: pred, bottomPrediction: bottomPred,
+      score, topScore, bottomScore,
+      details, bottomDetails,
+      exactMatches, winnerPos,
+    };
   });
   list.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -1189,13 +1228,15 @@ function LiveParty({ pantryId, syncStatus, lastSyncAt, onConnect, onDisconnect, 
 
 // Form for viewers to submit their own prediction. Reads latest state from Pantry
 // before writing, so a host edit happening at the same moment doesn't get overwritten.
-function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, onSubmitted, toast }) {
+function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, savedBottom, onSubmitted, toast }) {
   const [name, setName] = useState(savedName || '');
   const [ranking, setRanking] = useState(savedRanking ? [...savedRanking] : []);
+  const [bottomRanking, setBottomRanking] = useState(savedBottom ? [...savedBottom] : []);
   const [submitting, setSubmitting] = useState(false);
   const [editing, setEditing] = useState(!savedName);
 
   const inSet = useMemo(() => new Set(ranking), [ranking]);
+  const inBottomSet = useMemo(() => new Set(bottomRanking), [bottomRanking]);
   const availableCountries = useMemo(
     () => (finalists || []).map(n => ({ name: n, flag: flagFor(n) })),
     [finalists]
@@ -1203,7 +1244,9 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
 
   const addCountry = (c) => {
     if (ranking.length >= 10) { toast('Top 10 full — remove one first'); return; }
-    if (!inSet.has(c)) setRanking([...ranking, c]);
+    if (inSet.has(c)) return;
+    if (inBottomSet.has(c)) { toast(`${c} is in your Bottom 3 — remove it there first`); return; }
+    setRanking([...ranking, c]);
   };
   const removeAt = (i) => setRanking(ranking.filter((_, j) => j !== i));
   const moveAt = (from, to) => {
@@ -1214,32 +1257,51 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
   };
   const handleToggle = (c) => inSet.has(c) ? setRanking(ranking.filter(x => x !== c)) : addCountry(c);
 
+  const addBottom = (c) => {
+    if (bottomRanking.length >= 3) { toast('Bottom 3 full'); return; }
+    if (inBottomSet.has(c)) return;
+    if (inSet.has(c)) { toast(`${c} is in your Top 10 — remove it there first`); return; }
+    setBottomRanking([...bottomRanking, c]);
+  };
+  const removeBottomAt = (i) => setBottomRanking(bottomRanking.filter((_, j) => j !== i));
+  const moveBottomAt = (from, to) => {
+    if (to < 0 || to >= bottomRanking.length) return;
+    const next = [...bottomRanking];
+    [next[from], next[to]] = [next[to], next[from]];
+    setBottomRanking(next);
+  };
+  const handleBottomToggle = (c) => inBottomSet.has(c) ? setBottomRanking(bottomRanking.filter(x => x !== c)) : addBottom(c);
+
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) { toast('Enter your name first'); return; }
     if (ranking.length !== 10) { toast(`Pick ${10 - ranking.length} more`); return; }
     setSubmitting(true);
     try {
-      // Read FRESH state from Pantry right before writing, so we don't overwrite
-      // host edits made in the last few seconds.
       const fresh = await pantryRead(pantryId);
       if (!fresh) {
         toast('Cannot save — the party data has disappeared. Ask your host to check.');
         setSubmitting(false);
         return;
       }
-      // If they renamed, remove the old name to avoid duplicate entries
       const nextPredictions = { ...(fresh.predictions || {}) };
-      if (savedName && savedName !== trimmed) delete nextPredictions[savedName];
+      const nextBottom = { ...(fresh.bottomPredictions || {}) };
+      if (savedName && savedName !== trimmed) {
+        delete nextPredictions[savedName];
+        delete nextBottom[savedName];
+      }
       nextPredictions[trimmed] = ranking;
-
-      // Clear any tombstone for this name — re-submitting un-removes them
+      if (bottomRanking.length > 0) {
+        nextBottom[trimmed] = bottomRanking;
+      } else {
+        delete nextBottom[trimmed];
+      }
       const nextRemoved = (fresh.removedPredictions || []).filter(n => n !== trimmed && n !== savedName);
 
-      const merged = { ...fresh, predictions: nextPredictions, removedPredictions: nextRemoved };
+      const merged = { ...fresh, predictions: nextPredictions, bottomPredictions: nextBottom, removedPredictions: nextRemoved };
       await pantryWrite(pantryId, merged);
       toast('Submitted! The host can see it now.');
-      onSubmitted(trimmed, ranking);
+      onSubmitted(trimmed, ranking, bottomRanking);
       setEditing(false);
     } catch (e) {
       toast(`Couldn't submit: ${(e.message || '').slice(0, 80)}`);
@@ -1256,7 +1318,8 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
           <h3>✅ Your prediction is in</h3>
           <span className="live-status connected"><span className="ind"></span>Saved as {savedName}</span>
         </div>
-        <div className="viewer-prediction-list" style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 8, marginBottom: 6 }}>Your top 10</div>
+        <div className="viewer-prediction-list">
           {savedRanking.map((country, i) => (
             <div key={i} className={`viewer-prediction-item ${i === 0 ? 'gold' : ''}`}>
               <span className="pos">{i + 1}</span>
@@ -1265,6 +1328,23 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
             </div>
           ))}
         </div>
+        {savedBottom && savedBottom.length > 0 && (
+          <>
+            <div style={{ fontSize: 11, color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Your bottom 3 🥄</div>
+            <div className="viewer-prediction-list">
+              {savedBottom.map((country, i) => {
+                const label = ['Last', '2nd-last', '3rd-last'][i] || `#${i+1}`;
+                return (
+                  <div key={i} className="viewer-prediction-item">
+                    <span className="pos" style={{ width: 56, fontSize: 10 }}>{label}</span>
+                    <span style={{ fontSize: 14 }}>{flagFor(country)}</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{country}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
         <div className="btn-row">
           <button className="btn btn-ghost" onClick={() => setEditing(true)}>Edit my prediction</button>
         </div>
@@ -1272,15 +1352,14 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
     );
   }
 
-  // Show the form
   return (
     <div className="card share-card">
       <div className="section-header">
         <h3>📝 Submit Your Prediction</h3>
-        <span className="badge">{ranking.length}/10</span>
+        <span className="badge">{ranking.length}/10 + {bottomRanking.length}/3</span>
       </div>
       <div className="help-text" style={{ background: 'rgba(255, 45, 146, 0.06)', borderColor: 'rgba(255, 45, 146, 0.20)' }}>
-        Pick your top 10 in order (1 = winner). It'll show up on the host's screen right away, and your scoring will appear here when the actual results come in.
+        Pick your top 10 in order (1 = winner). Bottom 3 picks are optional — guess who'll come last, 2nd-to-last, and 3rd-to-last for up to <b>+30 bonus points</b>.
       </div>
 
       <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Your name</label>
@@ -1299,16 +1378,36 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
       <RankingList ranking={ranking} onMove={moveAt} onRemove={removeAt} />
 
       <div className="section-header" style={{ marginTop: 22 }}>
-        <h3>Tap to add</h3>
-        <span className="badge">{(finalists?.length || 0) - ranking.length} left</span>
+        <h3>Tap to add to Top 10</h3>
       </div>
       {availableCountries.length > 0 ? (
-        <CountryGrid countries={availableCountries} selectedSet={inSet} onToggle={handleToggle} />
+        <CountryGrid countries={availableCountries} selectedSet={inSet} onToggle={handleToggle} disabledSet={inBottomSet} />
       ) : (
         <div className="empty-state" style={{ padding: 24 }}>
           <div className="icon">⏳</div>
           <p>Waiting for the host to set up the finalists…</p>
         </div>
+      )}
+
+      <div className="section-header" style={{ marginTop: 28 }}>
+        <h3>🥄 Bottom 3 <span style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 500, fontSize: 12, color: 'var(--ink-dim)', textTransform: 'none', letterSpacing: 0, marginLeft: 6 }}>(optional · +30)</span></h3>
+        <span className="badge">{bottomRanking.length}/3</span>
+      </div>
+      <RankingList
+        ranking={bottomRanking}
+        onMove={moveBottomAt}
+        onRemove={removeBottomAt}
+        max={3}
+        positionLabels={['Last', '2nd to last', '3rd to last']}
+      />
+
+      {availableCountries.length > 0 && (
+        <>
+          <div className="section-header" style={{ marginTop: 22 }}>
+            <h3>Tap to add to Bottom 3</h3>
+          </div>
+          <CountryGrid countries={availableCountries} selectedSet={inBottomSet} onToggle={handleBottomToggle} disabledSet={inSet} />
+        </>
       )}
 
       <div className="btn-row">
@@ -1318,7 +1417,8 @@ function ViewerPredictionForm({ pantryId, finalists, savedName, savedRanking, on
         {savedName && (
           <button className="btn btn-ghost" onClick={() => {
             setName(savedName);
-            setRanking([...savedRanking]);
+            setRanking([...(savedRanking || [])]);
+            setBottomRanking([...(savedBottom || [])]);
             setEditing(false);
           }}>Cancel</button>
         )}
@@ -1414,14 +1514,18 @@ function ViewerScreen({ pantryId, toast }) {
 
   const finalists = state.finalists || [];
   const predictions = state.predictions || {};
+  const bottomPredictions = state.bottomPredictions || {};
   const actualResults = state.actualResults || [];
+  const actualBottom = state.actualBottom || [];
   const resultsRevealed = state.resultsRevealed && actualResults.length === 10;
   const playerNames = Object.keys(predictions);
+  const hasBottomActual = actualBottom.length > 0;
+  const bottomLabels = ['Last', '2nd to last', '3rd to last'];
 
   // Compute scored leaderboard if results revealed
   let leaderboard = [];
   if (resultsRevealed) {
-    leaderboard = rankPlayers(predictions, actualResults);
+    leaderboard = rankPlayers(predictions, actualResults, bottomPredictions, actualBottom);
   }
 
   return (
@@ -1455,19 +1559,27 @@ function ViewerScreen({ pantryId, toast }) {
           finalists={finalists}
           savedName={myName}
           savedRanking={myName ? (predictions[myName] || null) : null}
-          onSubmitted={(submittedName, submittedRanking) => {
-            // Save locally so the form remembers across refreshes
+          savedBottom={myName ? (bottomPredictions[myName] || null) : null}
+          onSubmitted={(submittedName, submittedRanking, submittedBottom) => {
             try { localStorage.setItem(VIEWER_ME_KEY, submittedName); } catch {}
             setMyName(submittedName);
-            // Optimistically update local state so it shows up immediately
-            setState(prev => prev ? {
-              ...prev,
-              predictions: {
-                ...(prev.predictions || {}),
-                ...((myName && myName !== submittedName) ? Object.fromEntries(Object.entries(prev.predictions || {}).filter(([k]) => k !== myName)) : prev.predictions || {}),
-                [submittedName]: submittedRanking,
-              },
-            } : prev);
+            // Optimistically reflect locally so it shows up immediately
+            setState(prev => {
+              if (!prev) return prev;
+              const nextPredictions = { ...(prev.predictions || {}) };
+              const nextBottom = { ...(prev.bottomPredictions || {}) };
+              if (myName && myName !== submittedName) {
+                delete nextPredictions[myName];
+                delete nextBottom[myName];
+              }
+              nextPredictions[submittedName] = submittedRanking;
+              if (submittedBottom && submittedBottom.length > 0) {
+                nextBottom[submittedName] = submittedBottom;
+              } else {
+                delete nextBottom[submittedName];
+              }
+              return { ...prev, predictions: nextPredictions, bottomPredictions: nextBottom };
+            });
           }}
           toast={toast}
         />
@@ -1489,6 +1601,25 @@ function ViewerScreen({ pantryId, toast }) {
             </div>
           </div>
 
+          {hasBottomActual && (
+            <div className="card actual-results-card">
+              <div className="section-header"><h3>🥄 The Bottom 3</h3></div>
+              <div className="ranking-list">
+                {actualBottom.map((country, i) => (
+                  <div key={country} className={`ranking-slot filled ${i === 0 ? 'bottom-last' : ''}`}>
+                    <div className="rank-num" style={{ width: 72, fontSize: 11, fontFamily: 'Plus Jakarta Sans', fontWeight: 700 }}>
+                      {bottomLabels[i]}
+                    </div>
+                    <div className="rank-country">
+                      <span className="flag">{flagFor(country)}</span>
+                      <span>{country}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="card">
             <div className="section-header"><h3>👑 Leaderboard</h3></div>
             {leaderboard.map((entry, idx) => (
@@ -1499,6 +1630,11 @@ function ViewerScreen({ pantryId, toast }) {
                   {entry.exactMatches > 0 && (
                     <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--lime)', fontWeight: 600, letterSpacing: '0.05em' }}>
                       ✓ {entry.exactMatches} exact
+                    </span>
+                  )}
+                  {entry.bottomScore > 0 && (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--pink)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                      +{entry.bottomScore} bottom
                     </span>
                   )}
                 </div>
@@ -1537,13 +1673,14 @@ function ViewerScreen({ pantryId, toast }) {
           </div>
           {playerNames.map(name => {
             const ranking = predictions[name] || [];
+            const bottomPick = bottomPredictions[name] || [];
             return (
               <div key={name} className="viewer-prediction">
                 <div className="viewer-prediction-header">
                   <div className="viewer-prediction-name">{name}</div>
                   {resultsRevealed && (
                     <div className="score" style={{ fontFamily: "'Bowlby One', cursive", color: 'var(--cyan)' }}>
-                      {calcScore(ranking, actualResults).score} pts
+                      {(calcScore(ranking, actualResults).score + calcBottomScore(bottomPick, actualBottom).score)} pts
                     </div>
                   )}
                 </div>
@@ -1556,6 +1693,20 @@ function ViewerScreen({ pantryId, toast }) {
                     </div>
                   ))}
                 </div>
+                {bottomPick.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 10, color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10, marginBottom: 4 }}>Bottom 3 picks 🥄</div>
+                    <div className="viewer-prediction-list">
+                      {bottomPick.map((country, i) => (
+                        <div key={i} className="viewer-prediction-item">
+                          <span className="pos" style={{ width: 56, fontSize: 10 }}>{['Last', '2nd-last', '3rd-last'][i] || `#${i+1}`}</span>
+                          <span style={{ fontSize: 14 }}>{flagFor(country)}</span>
+                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{country}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             );
           })}
@@ -1704,15 +1855,28 @@ function SetupScreen({ state, save, setPhase, toast, livePantryId, syncStatus, l
   );
 }
 
-function RankingList({ ranking, onMove, onRemove, max = 10, emptyLabel = 'Empty — tap a country below' }) {
+function RankingList({ ranking, onMove, onRemove, max = 10, emptyLabel = 'Empty — tap a country below', positionLabels = null }) {
   const slots = [];
+  const isBottom = !!positionLabels;
   for (let i = 0; i < max; i++) {
     const country = ranking[i];
     const filled = !!country;
-    const cls = filled ? (i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '') : '';
+    // For top 10: gold/silver/bronze for top 3 positions.
+    // For bottom 3: a single "danger" treatment on slot 1 (last place).
+    let cls = '';
+    if (filled) {
+      if (isBottom) {
+        cls = i === 0 ? 'bottom-last' : '';
+      } else {
+        cls = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+      }
+    }
+    const label = positionLabels ? positionLabels[i] : (i + 1);
     slots.push(
       <div key={i} className={`ranking-slot ${filled ? 'filled' : 'empty'} ${cls}`}>
-        <div className="rank-num">{i + 1}</div>
+        <div className="rank-num" style={isBottom ? { width: 72, fontSize: 11, fontFamily: 'Plus Jakarta Sans', fontWeight: 700, letterSpacing: '0.02em' } : null}>
+          {label}
+        </div>
         <div className="rank-country">
           {filled ? (
             <>
@@ -1739,9 +1903,11 @@ function RankingList({ ranking, onMove, onRemove, max = 10, emptyLabel = 'Empty 
 function PredictScreen({ state, save, setPhase, toast }) {
   const [name, setName] = useState('');
   const [ranking, setRanking] = useState([]);
+  const [bottomRanking, setBottomRanking] = useState([]);
   const [editingName, setEditingName] = useState(null);
 
   const inRankingSet = useMemo(() => new Set(ranking), [ranking]);
+  const inBottomSet = useMemo(() => new Set(bottomRanking), [bottomRanking]);
   const availableCountries = useMemo(
     () => state.finalists.map(n => ({ name: n, flag: flagFor(n) })),
     [state.finalists]
@@ -1753,6 +1919,10 @@ function PredictScreen({ state, save, setPhase, toast }) {
       return;
     }
     if (inRankingSet.has(country)) return;
+    if (inBottomSet.has(country)) {
+      toast(`${country} is already in your Bottom 3 — remove it there first`);
+      return;
+    }
     setRanking([...ranking, country]);
   };
 
@@ -1775,6 +1945,34 @@ function PredictScreen({ state, save, setPhase, toast }) {
     }
   };
 
+  // Bottom-3 mirror helpers
+  const addBottom = (country) => {
+    if (bottomRanking.length >= 3) {
+      toast('Bottom 3 is full — remove one first');
+      return;
+    }
+    if (inBottomSet.has(country)) return;
+    if (inRankingSet.has(country)) {
+      toast(`${country} is already in your Top 10 — remove it there first`);
+      return;
+    }
+    setBottomRanking([...bottomRanking, country]);
+  };
+  const removeBottomAt = (idx) => setBottomRanking(bottomRanking.filter((_, i) => i !== idx));
+  const moveBottomAt = (from, to) => {
+    if (to < 0 || to >= bottomRanking.length) return;
+    const next = [...bottomRanking];
+    [next[from], next[to]] = [next[to], next[from]];
+    setBottomRanking(next);
+  };
+  const handleBottomToggle = (country) => {
+    if (inBottomSet.has(country)) {
+      setBottomRanking(bottomRanking.filter(c => c !== country));
+    } else {
+      addBottom(country);
+    }
+  };
+
   const submit = () => {
     const trimmed = name.trim();
     if (!trimmed) { toast('Enter your name first'); return; }
@@ -1783,22 +1981,32 @@ function PredictScreen({ state, save, setPhase, toast }) {
       if (!confirm(`${trimmed} already submitted. Replace their prediction?`)) return;
     }
     const finalRanking = [...ranking];
+    const finalBottom = [...bottomRanking];
     const nextPredictions = { ...state.predictions, [trimmed]: finalRanking };
+    const nextBottom = { ...(state.bottomPredictions || {}) };
+    if (finalBottom.length > 0) {
+      nextBottom[trimmed] = finalBottom;
+    } else {
+      delete nextBottom[trimmed];
+    }
     if (editingName && editingName !== trimmed) {
       delete nextPredictions[editingName];
+      delete nextBottom[editingName];
     }
-    // If this name was previously tombstoned, clear it — adding them back un-removes them
+    // If this name was previously tombstoned, clear it
     const removed = (state.removedPredictions || []).filter(n => n !== trimmed);
-    save({ ...state, predictions: nextPredictions, removedPredictions: removed });
+    save({ ...state, predictions: nextPredictions, bottomPredictions: nextBottom, removedPredictions: removed });
     toast(`Saved ${trimmed}'s prediction!`);
     setName('');
     setRanking([]);
+    setBottomRanking([]);
     setEditingName(null);
   };
 
   const startEdit = (playerName) => {
     setName(playerName);
     setRanking([...state.predictions[playerName]]);
+    setBottomRanking([...(state.bottomPredictions?.[playerName] || [])]);
     setEditingName(playerName);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -1807,20 +2015,24 @@ function PredictScreen({ state, save, setPhase, toast }) {
     if (!confirm(`Remove ${playerName}'s prediction?`)) return;
     const next = { ...state.predictions };
     delete next[playerName];
-    // Record the deletion as a tombstone so the sync layer doesn't pull it back
+    const nextBottom = { ...(state.bottomPredictions || {}) };
+    delete nextBottom[playerName];
     const removed = (state.removedPredictions || []).filter(n => n !== playerName);
     removed.push(playerName);
-    // Cap at last 50 to keep the list bounded
     const capped = removed.slice(-50);
-    save({ ...state, predictions: next, removedPredictions: capped });
+    save({ ...state, predictions: next, bottomPredictions: nextBottom, removedPredictions: capped });
     if (editingName === playerName) {
       setEditingName(null);
       setName('');
       setRanking([]);
+      setBottomRanking([]);
     }
   };
 
   const players = Object.keys(state.predictions);
+  // Countries already used in top-10 are disabled in the bottom-3 picker and vice versa
+  const disabledForTop = inBottomSet;
+  const disabledForBottom = inRankingSet;
 
   return (
     <>
@@ -1832,7 +2044,7 @@ function PredictScreen({ state, save, setPhase, toast }) {
           {editingName && <span className="badge" style={{ background: 'rgba(0, 229, 255, 0.15)', borderColor: 'var(--cyan)', color: 'var(--cyan)' }}>Editing {editingName}</span>}
         </div>
         <div className="help-text">
-          Type a player's name, then tap finalists to fill their top 10 (1 = winner, 10 = tenth place). Use the arrows to reorder, then <b>Save</b> and move on to the next person.
+          Type a player's name, then tap finalists to fill their top 10 (1 = winner, 10 = tenth place). Bottom 3 picks are optional — pick the countries they think will end up last, second-to-last, and third-to-last for +30 bonus points.
         </div>
 
         <label style={{ fontSize: 13, color: 'var(--ink-dim)', display: 'block', marginBottom: 6 }}>Player name</label>
@@ -1855,21 +2067,45 @@ function PredictScreen({ state, save, setPhase, toast }) {
         />
 
         <div className="section-header" style={{ marginTop: 22 }}>
-          <h3>Tap to add</h3>
-          <span className="badge">{state.finalists.length - ranking.length} left</span>
+          <h3>Tap to add to Top 10</h3>
+          <span className="badge">{state.finalists.length - ranking.length - bottomRanking.length} available</span>
         </div>
         <CountryGrid
           countries={availableCountries}
           selectedSet={inRankingSet}
           onToggle={handleToggle}
+          disabledSet={disabledForTop}
+        />
+
+        <div className="section-header" style={{ marginTop: 28 }}>
+          <h3>🥄 Bottom 3 <span style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 500, fontSize: 12, color: 'var(--ink-dim)', textTransform: 'none', letterSpacing: 0, marginLeft: 6 }}>(optional · +30 bonus)</span></h3>
+          <span className="badge">{bottomRanking.length}/3</span>
+        </div>
+        <RankingList
+          ranking={bottomRanking}
+          onMove={moveBottomAt}
+          onRemove={removeBottomAt}
+          max={3}
+          emptyLabel="Empty — tap a country below"
+          positionLabels={['Last', '2nd to last', '3rd to last']}
+        />
+
+        <div className="section-header" style={{ marginTop: 22 }}>
+          <h3>Tap to add to Bottom 3</h3>
+        </div>
+        <CountryGrid
+          countries={availableCountries}
+          selectedSet={inBottomSet}
+          onToggle={handleBottomToggle}
+          disabledSet={disabledForBottom}
         />
 
         <div className="btn-row">
           <button className="btn btn-primary" onClick={submit} disabled={ranking.length !== 10 || !name.trim()}>
             {editingName ? 'Update Prediction' : 'Save Prediction'}
           </button>
-          {(ranking.length > 0 || editingName) && (
-            <button className="btn btn-ghost" onClick={() => { setRanking([]); setName(''); setEditingName(null); }}>
+          {(ranking.length > 0 || bottomRanking.length > 0 || editingName) && (
+            <button className="btn btn-ghost" onClick={() => { setRanking([]); setBottomRanking([]); setName(''); setEditingName(null); }}>
               Clear
             </button>
           )}
@@ -1883,16 +2119,22 @@ function PredictScreen({ state, save, setPhase, toast }) {
             <span className="badge live">{players.length} player{players.length !== 1 ? 's' : ''}</span>
           </div>
           <div className="player-list">
-            {players.map(p => (
-              <div key={p} className="player-row">
-                <div className="check">✓</div>
-                <div className="name">{p}</div>
-                <div className="actions">
-                  <button onClick={() => startEdit(p)}>Edit</button>
-                  <button onClick={() => removePlayer(p)}>Remove</button>
+            {players.map(p => {
+              const hasBottom = (state.bottomPredictions?.[p]?.length || 0) > 0;
+              return (
+                <div key={p} className="player-row">
+                  <div className="check">✓</div>
+                  <div className="name">
+                    {p}
+                    {hasBottom && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--cyan)', fontWeight: 600 }}>+ bottom 3</span>}
+                  </div>
+                  <div className="actions">
+                    <button onClick={() => startEdit(p)}>Edit</button>
+                    <button onClick={() => removePlayer(p)}>Remove</button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {players.length >= 1 && (
             <div className="btn-row">
@@ -1908,8 +2150,10 @@ function PredictScreen({ state, save, setPhase, toast }) {
 }
 
 function ResultsScreen({ state, save, setPhase, toast }) {
-  const [ranking, setRanking] = useState(state.actualResults);
+  const [ranking, setRanking] = useState(state.actualResults || []);
+  const [bottom, setBottom] = useState(state.actualBottom || []);
   const inRankingSet = useMemo(() => new Set(ranking), [ranking]);
+  const inBottomSet = useMemo(() => new Set(bottom), [bottom]);
   const availableCountries = useMemo(
     () => state.finalists.map(n => ({ name: n, flag: flagFor(n) })),
     [state.finalists]
@@ -1918,6 +2162,7 @@ function ResultsScreen({ state, save, setPhase, toast }) {
   const addCountry = (country) => {
     if (ranking.length >= 10) { toast('Top 10 is full'); return; }
     if (inRankingSet.has(country)) return;
+    if (inBottomSet.has(country)) { toast(`${country} is in the bottom 3 — remove it there first`); return; }
     setRanking([...ranking, country]);
   };
   const removeAt = (idx) => setRanking(ranking.filter((_, i) => i !== idx));
@@ -1935,14 +2180,35 @@ function ResultsScreen({ state, save, setPhase, toast }) {
     }
   };
 
+  const addBottom = (country) => {
+    if (bottom.length >= 3) { toast('Bottom 3 is full'); return; }
+    if (inBottomSet.has(country)) return;
+    if (inRankingSet.has(country)) { toast(`${country} is in the top 10 — remove it there first`); return; }
+    setBottom([...bottom, country]);
+  };
+  const removeBottomAt = (idx) => setBottom(bottom.filter((_, i) => i !== idx));
+  const moveBottomAt = (from, to) => {
+    if (to < 0 || to >= bottom.length) return;
+    const next = [...bottom];
+    [next[from], next[to]] = [next[to], next[from]];
+    setBottom(next);
+  };
+  const handleBottomToggle = (country) => {
+    if (inBottomSet.has(country)) {
+      setBottom(bottom.filter(c => c !== country));
+    } else {
+      addBottom(country);
+    }
+  };
+
   const saveResults = () => {
-    save({ ...state, actualResults: ranking });
+    save({ ...state, actualResults: ranking, actualBottom: bottom });
     toast('Results saved');
   };
 
   const reveal = () => {
     if (ranking.length !== 10) { toast('Fill all 10 spots first'); return; }
-    save({ ...state, actualResults: ranking, resultsRevealed: true });
+    save({ ...state, actualResults: ranking, actualBottom: bottom, resultsRevealed: true });
     setPhase('leaderboard');
   };
 
@@ -1951,21 +2217,45 @@ function ResultsScreen({ state, save, setPhase, toast }) {
       <div className="card actual-results-card">
         <div className="section-header">
           <h3>Step 3 · The Actual Results</h3>
-          <span className="badge">{ranking.length}/10</span>
+          <span className="badge">{ranking.length}/10 top · {bottom.length}/3 bottom</span>
         </div>
         <div className="help-text">
-          Enter the real top 10 as they're announced (1 = winner). You can fill this in live as the show goes — your predictions are already locked in.
+          Enter the real top 10 as they're announced (1 = winner). The bottom 3 is optional but lets the bonus-point predictions count.
         </div>
 
+        <div className="section-header"><h3>Top 10</h3></div>
         <RankingList ranking={ranking} onMove={moveAt} onRemove={removeAt} />
 
         <div className="section-header" style={{ marginTop: 22 }}>
-          <h3>Finalists</h3>
+          <h3>Tap to add to Top 10</h3>
         </div>
         <CountryGrid
           countries={availableCountries}
           selectedSet={inRankingSet}
           onToggle={handleToggle}
+          disabledSet={inBottomSet}
+        />
+
+        <div className="section-header" style={{ marginTop: 28 }}>
+          <h3>🥄 Bottom 3 <span style={{ fontFamily: 'Plus Jakarta Sans', fontWeight: 500, fontSize: 12, color: 'var(--ink-dim)', textTransform: 'none', letterSpacing: 0, marginLeft: 6 }}>(optional)</span></h3>
+          <span className="badge">{bottom.length}/3</span>
+        </div>
+        <RankingList
+          ranking={bottom}
+          onMove={moveBottomAt}
+          onRemove={removeBottomAt}
+          max={3}
+          positionLabels={['Last', '2nd to last', '3rd to last']}
+        />
+
+        <div className="section-header" style={{ marginTop: 22 }}>
+          <h3>Tap to add to Bottom 3</h3>
+        </div>
+        <CountryGrid
+          countries={availableCountries}
+          selectedSet={inBottomSet}
+          onToggle={handleBottomToggle}
+          disabledSet={inRankingSet}
         />
 
         <div className="btn-row">
@@ -1983,18 +2273,20 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
   const [expanded, setExpanded] = useState(null);
 
   const scored = useMemo(() => {
-    return rankPlayers(state.predictions, state.actualResults);
-  }, [state.predictions, state.actualResults]);
+    return rankPlayers(state.predictions, state.actualResults, state.bottomPredictions, state.actualBottom);
+  }, [state.predictions, state.actualResults, state.bottomPredictions, state.actualBottom]);
+
+  const hasBottom = (state.actualBottom?.length || 0) > 0;
+  const maxPts = hasBottom ? 130 : 100;
 
   const playAgain = () => {
     if (!confirm('Start a fresh round? Finalists will be kept, but predictions and results will be cleared.')) return;
-    save({ ...state, predictions: {}, actualResults: [], resultsRevealed: false });
+    save({ ...state, predictions: {}, bottomPredictions: {}, actualResults: [], actualBottom: [], resultsRevealed: false });
     setPhase('predict');
     toast('Fresh round started');
   };
 
   const top3 = scored.slice(0, 3);
-  const rest = scored.slice(3);
 
   if (scored.length === 0) {
     return (
@@ -2005,6 +2297,8 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
       </div>
     );
   }
+
+  const bottomLabels = ['Last', '2nd to last', '3rd to last'];
 
   return (
     <>
@@ -2024,6 +2318,27 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
           ))}
         </div>
       </div>
+
+      {hasBottom && (
+        <div className="card actual-results-card">
+          <div className="section-header">
+            <h3>🥄 The Bottom 3</h3>
+          </div>
+          <div className="ranking-list">
+            {state.actualBottom.map((country, i) => (
+              <div key={country} className={`ranking-slot filled ${i === 0 ? 'bottom-last' : ''}`}>
+                <div className="rank-num" style={{ width: 72, fontSize: 11, fontFamily: 'Plus Jakarta Sans', fontWeight: 700 }}>
+                  {bottomLabels[i]}
+                </div>
+                <div className="rank-country">
+                  <span className="flag">{flagFor(country)}</span>
+                  <span>{country}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {top3.length >= 1 && (
         <div className="lb-podium">
@@ -2054,10 +2369,12 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
       <div className="card">
         <div className="section-header">
           <h3>Full Leaderboard</h3>
-          <span className="badge">Max 100 pts</span>
+          <span className="badge">Max {maxPts} pts</span>
         </div>
         <div className="help-text">
-          <b>Scoring:</b> For each country in your top 10 that's also in the actual top 10, you get <b>10 − |off-by|</b> points. Exact match = 10 pts, off by 1 = 9 pts, off by 9 = 1 pt, missed = 0 pts. <b>Perfect = 100.</b> Tap a row to see the breakdown. <b>Ties</b> are broken by: most exact matches → closest to predicting the winner → alphabetical.
+          <b>Scoring:</b> For each country in your top 10 that's also in the actual top 10, you get <b>10 − |off-by|</b> points. Exact match = 10 pts, missed = 0 pts. <b>Perfect top 10 = 100.</b>
+          {hasBottom && <> Bottom 3 picks score the same way against the actual bottom 3, for up to <b>+30 bonus</b>.</>}
+          {' '}Tap a row to see the breakdown. <b>Ties</b> are broken by: most exact matches → closest to predicting the winner → alphabetical.
         </div>
         {scored.map((entry, idx) => (
           <React.Fragment key={entry.name}>
@@ -2073,14 +2390,20 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
                     ✓ {entry.exactMatches} exact
                   </span>
                 )}
+                {entry.bottomScore > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--pink)', fontWeight: 600, letterSpacing: '0.05em' }}>
+                    +{entry.bottomScore} bottom
+                  </span>
+                )}
               </div>
               <div className="score">{entry.score}</div>
               <div className="expand">▼</div>
             </div>
             {expanded === entry.name && (
               <div className="lb-detail">
+                <div style={{ fontSize: 11, color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '4px 0 6px' }}>Top 10 picks</div>
                 {entry.details.map((d, i) => (
-                  <div key={i} className="lb-detail-row">
+                  <div key={`t${i}`} className="lb-detail-row">
                     <div className="pred-pos">#{d.predPos}</div>
                     <div>
                       <span style={{ marginRight: 6 }}>{flagFor(d.country)}</span>
@@ -2101,6 +2424,33 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
                     </div>
                   </div>
                 ))}
+                {entry.bottomPrediction && entry.bottomPrediction.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, color: 'var(--ink-dim)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }}>Bottom 3 picks</div>
+                    {entry.bottomDetails.map((d, i) => (
+                      <div key={`b${i}`} className="lb-detail-row">
+                        <div className="pred-pos" style={{ fontSize: 11 }}>{bottomLabels[i] || `#${d.predPos}`}</div>
+                        <div>
+                          <span style={{ marginRight: 6 }}>{flagFor(d.country)}</span>
+                          {d.country}
+                          {d.actualPos != null && d.actualPos !== d.predPos && (
+                            <span style={{ color: 'var(--ink-dim)', marginLeft: 8, fontSize: 12 }}>
+                              → actual {bottomLabels[d.actualPos - 1] || `#${d.actualPos}`}
+                            </span>
+                          )}
+                          {d.actualPos == null && (
+                            <span style={{ color: 'var(--ink-dim)', marginLeft: 8, fontSize: 12 }}>
+                              → not in bottom 3
+                            </span>
+                          )}
+                        </div>
+                        <div className={`points ${d.pts === 10 ? 'hit-10' : d.pts > 0 ? 'hit-mid' : 'miss'}`}>
+                          {d.pts > 0 ? `+${d.pts}` : '0'}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </React.Fragment>
@@ -2177,25 +2527,37 @@ function App() {
         // polled yet, and they'd disappear from the leaderboard.
         const remote = await pantryRead(livePantryId);
         let toWrite = data;
-        if (remote && remote.predictions) {
-          // Names the host has explicitly deleted; never re-add these
+        if (remote && (remote.predictions || remote.bottomPredictions)) {
           const removed = new Set(data.removedPredictions || []);
+          // Predictions (top 10) merge: remote-only that we haven't seen yet
           const remoteOnlyPreds = {};
-          for (const [name, ranking] of Object.entries(remote.predictions)) {
+          for (const [name, ranking] of Object.entries(remote.predictions || {})) {
             if (removed.has(name)) continue;
             if (!data.predictions || !(name in data.predictions)) {
               remoteOnlyPreds[name] = ranking;
             }
           }
-          if (Object.keys(remoteOnlyPreds).length > 0) {
+          // Bottom-3 predictions merge: same logic
+          const remoteOnlyBottom = {};
+          for (const [name, ranking] of Object.entries(remote.bottomPredictions || {})) {
+            if (removed.has(name)) continue;
+            if (!data.bottomPredictions || !(name in data.bottomPredictions)) {
+              remoteOnlyBottom[name] = ranking;
+            }
+          }
+          const hasPredsToMerge = Object.keys(remoteOnlyPreds).length > 0;
+          const hasBottomToMerge = Object.keys(remoteOnlyBottom).length > 0;
+          if (hasPredsToMerge || hasBottomToMerge) {
             toWrite = {
               ...data,
               predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
+              bottomPredictions: { ...remoteOnlyBottom, ...(data.bottomPredictions || {}) },
             };
             // Also reflect these in local state so they show up in the host UI
             setState(prev => ({
               ...prev,
               predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
+              bottomPredictions: { ...remoteOnlyBottom, ...(prev.bottomPredictions || {}) },
             }));
             try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
           }
@@ -2243,27 +2605,36 @@ function App() {
     const poll = async () => {
       try {
         const remote = await pantryRead(livePantryId);
-        if (cancelled || !remote || !remote.predictions) return;
+        if (cancelled || !remote) return;
         const current = stateRef.current;
         const localPreds = current.predictions || {};
-        const remotePreds = remote.predictions;
-        // Names the host has explicitly deleted; never re-add these
+        const localBottom = current.bottomPredictions || {};
+        const remotePreds = remote.predictions || {};
+        const remoteBottom = remote.bottomPredictions || {};
         const removed = new Set(current.removedPredictions || []);
         let changed = false;
-        const merged = { ...localPreds };
+        const mergedPreds = { ...localPreds };
+        const mergedBottom = { ...localBottom };
         for (const [name, ranking] of Object.entries(remotePreds)) {
           if (removed.has(name)) continue;
           const localR = localPreds[name];
           if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
-            merged[name] = ranking;
+            mergedPreds[name] = ranking;
+            changed = true;
+          }
+        }
+        for (const [name, ranking] of Object.entries(remoteBottom)) {
+          if (removed.has(name)) continue;
+          const localR = localBottom[name];
+          if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
+            mergedBottom[name] = ranking;
             changed = true;
           }
         }
         if (changed) {
-          const newState = { ...current, predictions: merged };
+          const newState = { ...current, predictions: mergedPreds, bottomPredictions: mergedBottom };
           setState(newState);
           try { await storage.set(STORAGE_KEY, JSON.stringify(newState)); } catch (e) {}
-          // Don't re-push — we just pulled this from Pantry, pushing would be a no-op churn.
         }
       } catch (e) {
         // Ignore poll errors silently — we'll try again next tick
