@@ -2283,7 +2283,7 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
 
   const playAgain = () => {
     if (!confirm('Start a fresh round? Finalists will be kept, but predictions and results will be cleared.')) return;
-    save({ ...state, predictions: {}, bottomPredictions: {}, actualResults: [], actualBottom: [], resultsRevealed: false });
+    save({ ...state, predictions: {}, bottomPredictions: {}, actualResults: [], actualBottom: [], resultsRevealed: false, removedPredictions: [] });
     setPhase('predict');
     toast('Fresh round started');
   };
@@ -2530,36 +2530,39 @@ function App() {
         const remote = await pantryRead(livePantryId);
         let toWrite = data;
         if (remote && (remote.predictions || remote.bottomPredictions)) {
-          const removed = new Set(data.removedPredictions || []);
-          // Predictions (top 10) merge: remote-only that we haven't seen yet
+          const localRemovedSet = new Set(data.removedPredictions || []);
           const remoteOnlyPreds = {};
+          const remoteOnlyBottom = {};
+          // Track names that came back via a remote re-submission — these get un-tombstoned.
+          const namesToUntombstone = new Set();
           for (const [name, ranking] of Object.entries(remote.predictions || {})) {
-            if (removed.has(name)) continue;
             if (!data.predictions || !(name in data.predictions)) {
+              if (localRemovedSet.has(name)) namesToUntombstone.add(name);
               remoteOnlyPreds[name] = ranking;
             }
           }
-          // Bottom-3 predictions merge: same logic
-          const remoteOnlyBottom = {};
           for (const [name, ranking] of Object.entries(remote.bottomPredictions || {})) {
-            if (removed.has(name)) continue;
             if (!data.bottomPredictions || !(name in data.bottomPredictions)) {
+              if (localRemovedSet.has(name)) namesToUntombstone.add(name);
               remoteOnlyBottom[name] = ranking;
             }
           }
           const hasPredsToMerge = Object.keys(remoteOnlyPreds).length > 0;
           const hasBottomToMerge = Object.keys(remoteOnlyBottom).length > 0;
           if (hasPredsToMerge || hasBottomToMerge) {
+            const newRemoved = (data.removedPredictions || []).filter(n => !namesToUntombstone.has(n));
             toWrite = {
               ...data,
               predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
               bottomPredictions: { ...remoteOnlyBottom, ...(data.bottomPredictions || {}) },
+              removedPredictions: newRemoved,
             };
             // Also reflect these in local state so they show up in the host UI
             setState(prev => ({
               ...prev,
               predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
               bottomPredictions: { ...remoteOnlyBottom, ...(prev.bottomPredictions || {}) },
+              removedPredictions: (prev.removedPredictions || []).filter(n => !namesToUntombstone.has(n)),
             }));
             try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
           }
@@ -2613,12 +2616,17 @@ function App() {
         const localBottom = current.bottomPredictions || {};
         const remotePreds = remote.predictions || {};
         const remoteBottom = remote.bottomPredictions || {};
-        const removed = new Set(current.removedPredictions || []);
+        const localRemoved = current.removedPredictions || [];
+        const localRemovedSet = new Set(localRemoved);
         let changed = false;
         const mergedPreds = { ...localPreds };
         const mergedBottom = { ...localBottom };
+        // Names to un-tombstone: anyone whose prediction exists in remote was clearly
+        // re-submitted (or never should have been tombstoned). Un-tombstone them so
+        // we don't silently filter their predictions.
+        const namesToUntombstone = new Set();
         for (const [name, ranking] of Object.entries(remotePreds)) {
-          if (removed.has(name)) continue;
+          if (localRemovedSet.has(name)) namesToUntombstone.add(name);
           const localR = localPreds[name];
           if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
             mergedPreds[name] = ranking;
@@ -2626,15 +2634,23 @@ function App() {
           }
         }
         for (const [name, ranking] of Object.entries(remoteBottom)) {
-          if (removed.has(name)) continue;
+          if (localRemovedSet.has(name)) namesToUntombstone.add(name);
           const localR = localBottom[name];
           if (!localR || JSON.stringify(localR) !== JSON.stringify(ranking)) {
             mergedBottom[name] = ranking;
             changed = true;
           }
         }
-        if (changed) {
-          const newState = { ...current, predictions: mergedPreds, bottomPredictions: mergedBottom };
+        const newRemoved = namesToUntombstone.size > 0
+          ? localRemoved.filter(n => !namesToUntombstone.has(n))
+          : localRemoved;
+        if (changed || namesToUntombstone.size > 0) {
+          const newState = {
+            ...current,
+            predictions: mergedPreds,
+            bottomPredictions: mergedBottom,
+            removedPredictions: newRemoved,
+          };
           setState(newState);
           try { await storage.set(STORAGE_KEY, JSON.stringify(newState)); } catch (e) {}
         }
