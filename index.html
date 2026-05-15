@@ -1774,7 +1774,7 @@ function SetupScreen({ state, save, setPhase, toast, livePantryId, syncStatus, l
 
   const reset = () => {
     if (!confirm('Reset EVERYTHING (finalists, predictions, results)? This cannot be undone.')) return;
-    save(DEFAULT_STATE);
+    save(DEFAULT_STATE, { directWrite: true });
     toast('Reset complete');
   };
 
@@ -2283,7 +2283,7 @@ function LeaderboardScreen({ state, save, setPhase, toast }) {
 
   const playAgain = () => {
     if (!confirm('Start a fresh round? Finalists will be kept, but predictions and results will be cleared.')) return;
-    save({ ...state, predictions: {}, bottomPredictions: {}, actualResults: [], actualBottom: [], resultsRevealed: false, removedPredictions: [] });
+    save({ ...state, predictions: {}, bottomPredictions: {}, actualResults: [], actualBottom: [], resultsRevealed: false, removedPredictions: [] }, { directWrite: true });
     setPhase('predict');
     toast('Fresh round started');
   };
@@ -2503,6 +2503,9 @@ function App() {
         const raw = await storage.get(STORAGE_KEY);
         if (raw) {
           const parsed = JSON.parse(raw);
+          // Clear stale tombstones on load — they shouldn't haunt across sessions and cause
+          // silent data loss when a friend submits with a previously-deleted name.
+          parsed.removedPredictions = [];
           setState(parsed);
           if (parsed.resultsRevealed) setPhase('leaderboard');
           else if (parsed.actualResults?.length === 10) setPhase('results');
@@ -2530,39 +2533,36 @@ function App() {
         const remote = await pantryRead(livePantryId);
         let toWrite = data;
         if (remote && (remote.predictions || remote.bottomPredictions)) {
-          const localRemovedSet = new Set(data.removedPredictions || []);
+          // Names the host has explicitly deleted in this session — push MUST respect these
+          // strictly. If we un-tombstoned during push, the host's own delete would race
+          // against Pantry's existing data and the deletion would silently revert.
+          const removed = new Set(data.removedPredictions || []);
           const remoteOnlyPreds = {};
-          const remoteOnlyBottom = {};
-          // Track names that came back via a remote re-submission — these get un-tombstoned.
-          const namesToUntombstone = new Set();
           for (const [name, ranking] of Object.entries(remote.predictions || {})) {
+            if (removed.has(name)) continue;
             if (!data.predictions || !(name in data.predictions)) {
-              if (localRemovedSet.has(name)) namesToUntombstone.add(name);
               remoteOnlyPreds[name] = ranking;
             }
           }
+          const remoteOnlyBottom = {};
           for (const [name, ranking] of Object.entries(remote.bottomPredictions || {})) {
+            if (removed.has(name)) continue;
             if (!data.bottomPredictions || !(name in data.bottomPredictions)) {
-              if (localRemovedSet.has(name)) namesToUntombstone.add(name);
               remoteOnlyBottom[name] = ranking;
             }
           }
           const hasPredsToMerge = Object.keys(remoteOnlyPreds).length > 0;
           const hasBottomToMerge = Object.keys(remoteOnlyBottom).length > 0;
           if (hasPredsToMerge || hasBottomToMerge) {
-            const newRemoved = (data.removedPredictions || []).filter(n => !namesToUntombstone.has(n));
             toWrite = {
               ...data,
               predictions: { ...remoteOnlyPreds, ...(data.predictions || {}) },
               bottomPredictions: { ...remoteOnlyBottom, ...(data.bottomPredictions || {}) },
-              removedPredictions: newRemoved,
             };
-            // Also reflect these in local state so they show up in the host UI
             setState(prev => ({
               ...prev,
               predictions: { ...remoteOnlyPreds, ...(prev.predictions || {}) },
               bottomPredictions: { ...remoteOnlyBottom, ...(prev.bottomPredictions || {}) },
-              removedPredictions: (prev.removedPredictions || []).filter(n => !namesToUntombstone.has(n)),
             }));
             try { await storage.set(STORAGE_KEY, JSON.stringify(toWrite)); } catch (e) {}
           }
@@ -2571,23 +2571,34 @@ function App() {
         setSyncStatus('connected');
         setLastSyncAt(Date.now());
       } catch (e) {
-        // Either the read or the write failed. Either way, do NOT push local state
-        // blindly — that risks overwriting unpolled viewer submissions. The next state
-        // change will trigger another sync attempt automatically.
         setSyncStatus('error');
         console.error('Pantry sync failed (will retry on next change):', e);
       }
     }, 500);
   }, [livePantryId]);
 
-  const save = useCallback(async (next) => {
+  const save = useCallback(async (next, opts = {}) => {
     setState(next);
     try {
       await storage.set(STORAGE_KEY, JSON.stringify(next));
     } catch (e) { console.error('save failed', e); }
-    // Mirror to Pantry if connected
-    pushToLive(next);
-  }, [pushToLive]);
+    if (opts.directWrite && livePantryId) {
+      // Reset/play-again path: write directly to Pantry, bypassing the read-merge logic.
+      // Otherwise the merge would helpfully restore everything we just wiped.
+      if (pendingPushRef.current) clearTimeout(pendingPushRef.current);
+      setSyncStatus('syncing');
+      try {
+        await pantryWrite(livePantryId, next);
+        setSyncStatus('connected');
+        setLastSyncAt(Date.now());
+      } catch (e) {
+        setSyncStatus('error');
+        console.error('Direct write failed:', e);
+      }
+    } else {
+      pushToLive(next);
+    }
+  }, [pushToLive, livePantryId]);
 
   // When pantryId becomes connected (or changes), push current state immediately
   useEffect(() => {
